@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python 의존성
 COPY requirements/ requirements/
-RUN pip install --no-cache-dir -r requirements/local.txt
+RUN pip install --no-cache-dir -r requirements/local.txt 
+# RUN pip install --no-cache-dir -r requirements/production.txt 
 
 COPY . .
 

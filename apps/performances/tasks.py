@@ -1,6 +1,11 @@
 """
 Celery 태스크 - KOPIS 데이터 주기적 동기화.
 
+sync_single_performance.delay("PF12345")
+추후 프론트에서 주기적으로 서버에 조회를 하게 하거나
+웹소켓(asgi.py)를 통해 서버가 프론트에게 다시 보내주는 기술 추가
+
+
 celery.py / settings.py 설정 예::
 
     # settings.py
