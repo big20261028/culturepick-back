@@ -33,6 +33,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "social_django",
     "django_celery_beat",
@@ -205,3 +206,7 @@ LOGGING = {
         "django.db.backends": {"handlers": ["console"], "level": "WARNING"},
     },
 }
+
+import mimetypes
+
+mimetypes.add_type('application/javascript','.js', True)
