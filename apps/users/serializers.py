@@ -27,14 +27,12 @@ class LocalSignupSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        email = validated_data.get('email')
-        password = validated_data.get('password')
-        nickname = validated_data.get('nickname')
+        validated_data.pop('password_confirm')
         
         user = User.objects.create_user(
-            email=email,
-            password=password,
-            nickname=nickname,
+            email=validated_data['email'],
+            password=validated_data['password'],
+            nickname=validated_data['nickname'],
         )
         return user
 
@@ -64,4 +62,7 @@ class LocalLoginSerializer(serializers.Serializer):
 
 # 소셜(Oauth) 전용 시리얼라이저
 class SocialAuthSerializer(serializers.Serializer):
+    provider = serializers.CharField(max_length=10)
     code = serializers.CharField()
+    redirect_uri = serializers.CharField()   # 네이버는 state도 추가 필요
+    state = serializers.CharField(required=False, allow_blank=True)  # 네이버 전용
