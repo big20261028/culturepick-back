@@ -135,3 +135,26 @@ class UsersPerformanceAction(models.Model):
     class ActionType(models.TextChoices):
         INTEREST = 'interest', '관심저장'
         WATCHLIST = 'watchlist', '볼예정'
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='performance_actions',
+    )
+    performance = models.ForeignKey(
+        Performance,
+        on_delete=models.CASCADE,
+        related_name = 'users_performance_actions',
+    )
+    action_type = models.CharField(
+        max_length=20,
+        choices=ActionType.choices,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'users_performance_actions'
+        unique_together = ('user', 'performance', 'action_type')
+
+    def __str__(self):
+        return f"{self.user} - {self.performance} - {self.action_type}"
