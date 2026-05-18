@@ -36,9 +36,9 @@ class Performance(models.Model):
     """공연 - KOPIS pblprfr API"""
 
     class Status(models.TextChoices):
-        UPCOMING = "공연예정", "공연예정"
-        ONGOING = "공연중", "공연중"
-        COMPLETED = "공연완료", "공연완료"
+        UPCOMMING = "공연예정", "upcomming"
+        PERFORMING = "공연중", "performing"
+        DONE = "공연완료", "done"
 
     performance_id = models.CharField(
         max_length=20,
@@ -127,3 +127,11 @@ class BookingLink(models.Model):
 
     def __str__(self):
         return f"{self.performance_id} - {self.site_name}"
+
+from django.conf import settings
+
+class UsersPerformanceAction(models.Model):
+
+    class ActionType(models.TextChoices):
+        INTEREST = 'interest', '관심저장'
+        WATCHLIST = 'watchlist', '볼예정'
