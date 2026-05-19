@@ -52,7 +52,7 @@ class Performance(models.Model):
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.UPCOMING,
+        default=Status.UPCOMMING,
         help_text="공연상태 (prfstate)",
     )
     cast = models.TextField(blank=True, help_text="출연진 (prfcast)")
