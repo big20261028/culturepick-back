@@ -67,7 +67,7 @@ culturepick_BE/
 ### 1. 레포지토리 클론
 
 ```bash
-git clone https://github.com/{팀명}/culturepick-be.git
+git clone https://github.com/big20261028/culturepick-back.git
 cd culturepick-be
 ```
 
