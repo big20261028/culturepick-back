@@ -36,9 +36,9 @@ class Performance(models.Model):
     """공연 - KOPIS pblprfr API"""
 
     class Status(models.TextChoices):
-        UPCOMING = "공연예정", "공연예정"
-        ONGOING = "공연중", "공연중"
-        COMPLETED = "공연완료", "공연완료"
+        UPCOMMING = "공연예정", "upcomming"
+        PERFORMING = "공연중", "performing"
+        DONE = "공연완료", "done"
 
     performance_id = models.CharField(
         max_length=20,
@@ -52,7 +52,7 @@ class Performance(models.Model):
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.UPCOMING,
+        default=Status.UPCOMMING,
         help_text="공연상태 (prfstate)",
     )
     cast = models.TextField(blank=True, help_text="출연진 (prfcast)")
@@ -127,3 +127,34 @@ class BookingLink(models.Model):
 
     def __str__(self):
         return f"{self.performance_id} - {self.site_name}"
+
+from django.conf import settings
+
+class UsersPerformanceAction(models.Model):
+
+    class ActionType(models.TextChoices):
+        INTEREST = 'interest', '관심저장'
+        WATCHLIST = 'watchlist', '볼예정'
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='performance_actions',
+    )
+    performance = models.ForeignKey(
+        Performance,
+        on_delete=models.CASCADE,
+        related_name = 'users_performance_actions',
+    )
+    action_type = models.CharField(
+        max_length=20,
+        choices=ActionType.choices,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'users_performance_actions'
+        unique_together = ('user', 'performance', 'action_type')
+
+    def __str__(self):
+        return f"{self.user} - {self.performance} - {self.action_type}"

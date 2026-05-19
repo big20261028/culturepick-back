@@ -2,13 +2,28 @@ from django.shortcuts import render
 
 # Create your views here.
 # 서비스에서 보여줄 장르 → KOPIS 코드 매핑
+# SERVICE_GENRE_MAP = {
+#     "뮤지컬":  ["GGGA"], 
+#     "연극":    ["AAAA"],
+#     "클래식":  ["CCCA"],   # 서양음악 
+#     "국악":    ["CCCC"],   # 한국음악 통합
+#     "콘서트":  ["CCCD"],   # 대중음악 -> 콘서트 (프론트 요청사항)
+#     "무용/기타": ["BBBC", "BBBE", "EEEA", "EEEB"],  # 무용(대중무용,무용) + 기타(서커스/마술, 복합) 통합
+# }
+
 SERVICE_GENRE_MAP = {
-    "뮤지컬":  ["GGGA"],
-    "연극":    ["AAAA"],
-    "클래식":  ["CCCA"],   # 서양음악 
-    "국악":    ["CCCC"],   # 한국음악 통합
-    "콘서트":  ["CCCD"],   # 대중음악 -> 콘서트 (프론트 요청사항)
-    "무용/기타": ["BBBC", "BBBE", "EEEA", "EEEB"],  # 무용(대중무용,무용) + 기타(서커스/마술, 복합) 통합
+    "musical":  ["GGGA"], # 뮤지컬
+    "play":    ["AAAA"], # 연극
+    "classic":  ["CCCA"], # 클래식
+    "koreanMusic":    ["CCCC"], # 국악
+    "concert":  ["CCCD"], # 콘서트 (프론트 요청사항)
+    "dancing": ["BBBC", "BBBE", "EEEA", "EEEB"],  # 무용(대중무용,무용 + 기타(서커스/마술, 복합) 통합)
+}
+
+SERVICE_STATUS_MAP = {
+    'upcomming': '공연예정',
+    'performing': '공연중',
+    'done': '공연완료',
 }
 
 SERVICE_REGION_MAP = {
