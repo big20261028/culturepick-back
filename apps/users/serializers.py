@@ -6,6 +6,7 @@ DB와 상관없이 일회성 데이터만 검증할 때 (로그인, 비밀번호
 
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import AuthenticationFailed
 from django.contrib.auth import get_user_model
 
@@ -24,6 +25,7 @@ class LocalSignupSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data['password'] != data['password_confirm']:
             raise serializers.ValidationError({'password': '비밀번호가 일치하지 않습니다.'})
+        validate_password(data['password'])
         return data
 
     def create(self, validated_data):

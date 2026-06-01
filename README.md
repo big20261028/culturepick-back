@@ -155,10 +155,10 @@ python manage.py sync_kopis --stdate 20260101 --eddate 20260531 --genre GGGA
 
 ```bash
 # Celery 워커 실행
-celery -A config worker -l info
+celery -A BE worker -l info
 
 # Celery Beat 스케줄러 실행
-celery -A config beat -l info
+celery -A BE beat -l info
 ```
 
 ---

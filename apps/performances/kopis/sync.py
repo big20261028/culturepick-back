@@ -153,6 +153,7 @@ def sync_performance(raw: RawPerformanceDetail, client: KopisClient) -> tuple[Pe
             "crew": raw.prfcrew,
             "runtime": raw.prfruntime,
             "age_rating": raw.prfage,
+            "synopsis": raw.sty,
             "price_info": raw.pcseguidance,
             "schedule_info": raw.dtguidance,
             "poster_url": raw.poster,

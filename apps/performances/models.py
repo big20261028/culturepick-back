@@ -59,6 +59,7 @@ class Performance(models.Model):
     crew = models.TextField(blank=True, help_text="스태프 (prfcrew)")
     runtime = models.CharField(max_length=100, blank=True, help_text="공연런타임 (prfruntime)")
     age_rating = models.CharField(max_length=50, blank=True, help_text="관람등급 (prfage)")
+    synopsis = models.TextField(blank=True, help_text="공연 줄거리/소개 (sty)")
     price_info = models.TextField(blank=True, help_text="티켓가격 (pcseguidance)")
     schedule_info = models.TextField(blank=True, help_text="공연시간 (dtguidance)")
     poster_url = models.URLField(max_length=1000, blank=True, help_text="포스터 이미지 URL")

@@ -64,6 +64,7 @@ class RawPerformanceDetail:
     prfcrew: str
     prfruntime: str
     prfage: str
+    sty: str
     pcseguidance: str
     genrenm: str
     prfstate: str

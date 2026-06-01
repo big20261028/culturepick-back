@@ -170,6 +170,7 @@ def parse_performance_detail(xml_bytes: bytes) -> RawPerformanceDetail | None:
         prfcrew=_text(db, "prfcrew"),
         prfruntime=_text(db, "prfruntime"),
         prfage=_text(db, "prfage"),
+        sty=_text(db, "sty"),
         pcseguidance=_text(db, "pcseguidance"),
         genrenm=_text(db, "genrenm"),
         prfstate=_text(db, "prfstate"),

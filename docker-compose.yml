@@ -37,7 +37,7 @@ services:
     env_file:
       - .env
     environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
     depends_on:
@@ -50,13 +50,13 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    command: celery -A config worker -l info -c 4
+    command: celery -A BE worker -l info -c 4
     volumes:
       - .:/app
     env_file:
       - .env
     environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
     depends_on:
@@ -69,13 +69,13 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A BE beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/app
     env_file:
       - .env
     environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
     depends_on:

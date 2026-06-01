@@ -19,7 +19,7 @@ class VenueSerializer(serializers.ModelSerializer):
             'gugun',
             'address',
             'latitude',
-            'logitude',
+            'longitude',
         )
 
 
@@ -33,6 +33,34 @@ class BookingLinkSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingLink
         fields = ('site_name', 'url')
+
+
+class PerformanceActionSerializer(serializers.Serializer):
+    action_type = serializers.ChoiceField(choices=UsersPerformanceAction.ActionType.values)
+    is_active = serializers.BooleanField(required=False, allow_null=True, default=None)
+
+
+class PerformanceListSerializer(serializers.ModelSerializer):
+    venue = VenueSerializer(read_only=True)
+    search_score = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Performance
+        fields = (
+            'performance_id',
+            'title',
+            'genre',
+            'start_date',
+            'end_date',
+            'status',
+            'poster_url',
+            'runtime',
+            'age_rating',
+            'venue',
+            'view_count',
+            'zzim_count',
+            'search_score',
+        )
 
 
 class PerformanceDetailSerializer(serializers.ModelSerializer):
