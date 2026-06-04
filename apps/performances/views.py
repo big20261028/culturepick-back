@@ -7,6 +7,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.logs.services import (
+    request_user_or_none,
+    safe_record_search_log,
+    safe_record_view_log,
+)
+
 from .models import Performance, UsersPerformanceAction
 from .serializers import (
     PerformanceActionSerializer,
@@ -86,6 +92,18 @@ class PerformanceListView(ListAPIView):
     serializer_class = PerformanceListSerializer
     pagination_class = PerformanceSearchPagination
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        if response.status_code == 200 and self._should_record_search_log():
+            safe_record_search_log(
+                user=request_user_or_none(request),
+                keyword=self._get_query_param("keyword"),
+                filter_region=self._get_query_param("local") or self._get_query_param("region"),
+                filter_genre=self._get_query_param("genre"),
+                filter_status=self._get_query_param("status"),
+            )
+        return response
+
     def get_queryset(self):
         queryset = Performance.objects.select_related("venue")
         keyword = self.request.query_params.get("keyword", "").strip()
@@ -133,6 +151,13 @@ class PerformanceListView(ListAPIView):
 
     def _split_param(self, value):
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _should_record_search_log(self):
+        has_search_condition = any(
+            self._get_query_param(name) for name in ("keyword", "genre", "local", "region", "status")
+        )
+        page = self._get_query_param("pageNum") or self._get_query_param("page") or "1"
+        return has_search_condition and page == "1"
 
     def _apply_feature_filters(self, queryset):
         genre = self._get_query_param("genre")
@@ -223,6 +248,16 @@ class PerformanceDetailView(RetrieveAPIView):
         performance.view_count += 1
         return performance
 
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        if response.status_code == 200:
+            safe_record_view_log(
+                user=request_user_or_none(request),
+                performance_id=response.data["performance_id"],
+                log_type="detail",
+            )
+        return response
+
 
 class PerformanceActionView(APIView):
     permission_classes = [IsAuthenticated]
@@ -271,6 +306,11 @@ class PerformanceActionView(APIView):
             performance=performance,
             action_type=UsersPerformanceAction.ActionType.WATCHLIST,
         ).exists()
+        safe_record_view_log(
+            user=request_user_or_none(request),
+            performance_id=performance.performance_id,
+            log_type=f"{action_type}_{'on' if is_active else 'off'}",
+        )
 
         return Response({
             "performance_id": performance.performance_id,
