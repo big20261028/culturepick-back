@@ -71,6 +71,21 @@ class RawPerformanceDetail:
     poster: str
     area: str
     dtguidance: str
+    mt13id: str = ""
+    frstregdt: str = ""
+    entrpsnm: str = ""
+    entrpsnmP: str = ""
+    entrpsnmA: str = ""
+    entrpsnmH: str = ""
+    entrpsnmS: str = ""
+    openrun: str = ""
+    visit: str = ""
+    child: str = ""
+    daehakro: str = ""
+    festival: str = ""
+    musicallicense: str = ""
+    musicalcreate: str = ""
+    updatedate: str = ""
     styurls: list[str] = field(default_factory=list)
     relates: list[dict] = field(default_factory=list)
 
@@ -85,6 +100,9 @@ class RawVenueDetail:
     la: str
     lo: str
     seatscale: str
+    fcltychartr: str = ""
+    relateurl: str = ""
+    parkinglot: str = ""
 
 
 def _split_date_range(stdate: str, eddate: str) -> list[tuple[str, str]]:

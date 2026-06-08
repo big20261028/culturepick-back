@@ -177,6 +177,21 @@ def parse_performance_detail(xml_bytes: bytes) -> RawPerformanceDetail | None:
         poster=_text(db, "poster"),
         area=_text(db, "area"),
         dtguidance=_text(db, "dtguidance"),
+        mt13id=_text(db, "mt13id"),
+        frstregdt=_text(db, "frstregdt"),
+        entrpsnm=_text(db, "entrpsnm"),
+        entrpsnmP=_text(db, "entrpsnmP"),
+        entrpsnmA=_text(db, "entrpsnmA"),
+        entrpsnmH=_text(db, "entrpsnmH"),
+        entrpsnmS=_text(db, "entrpsnmS"),
+        openrun=_text(db, "openrun"),
+        visit=_text(db, "visit"),
+        child=_text(db, "child"),
+        daehakro=_text(db, "daehakro"),
+        festival=_text(db, "festival"),
+        musicallicense=_text(db, "musicallicense"),
+        musicalcreate=_text(db, "musicalcreate"),
+        updatedate=_text(db, "updatedate"),
         styurls=styurls,
         relates=relates,
     )
@@ -235,6 +250,9 @@ def parse_venue_detail(xml_bytes: bytes) -> RawVenueDetail | None:
         la=_text(db, "la"),
         lo=_text(db, "lo"),
         seatscale=_text(db, "seatscale"),
+        fcltychartr=_text(db, "fcltychartr"),
+        relateurl=_text(db, "relateurl"),
+        parkinglot=_text(db, "parkinglot"),
     )
 
 

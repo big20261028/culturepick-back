@@ -4,9 +4,9 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.performances.kopis.client import RawPerformanceDetail
+from apps.performances.kopis.client import RawPerformanceDetail, RawVenueDetail
 from apps.performances.kopis.parser import parse_performance_detail
-from apps.performances.kopis.sync import sync_performance
+from apps.performances.kopis.sync import parse_price_info, sync_performance, sync_venue
 from apps.performances.models import (
     BookingLink,
     Performance,
@@ -29,17 +29,27 @@ class KopisPerformanceDetailTests(TestCase):
             <prfpdto>2026.01.31</prfpdto>
             <fcltynm>Test Venue</fcltynm>
             <mt10id></mt10id>
+            <mt13id>STAGE001</mt13id>
+            <frstregdt>2026-01-01 09:30:00</frstregdt>
             <prfcast>Actor A</prfcast>
             <prfcrew>Crew A</prfcrew>
             <prfruntime>100 minutes</prfruntime>
             <prfage>8+</prfage>
             <sty>This is the KOPIS synopsis.</sty>
             <pcseguidance>R 10000</pcseguidance>
+            <entrpsnmP>Production A</entrpsnmP>
+            <entrpsnmA>Agency A</entrpsnmA>
+            <entrpsnmH>Host A</entrpsnmH>
+            <entrpsnmS>Organizer A</entrpsnmS>
             <genrenm>Musical</genrenm>
             <prfstate>Performing</prfstate>
             <poster>https://example.com/poster.jpg</poster>
             <area>Seoul</area>
             <dtguidance>Tue-Fri 20:00</dtguidance>
+            <openrun>Y</openrun>
+            <child>Y</child>
+            <festival>N</festival>
+            <updatedate>2026-01-02 10:30:00</updatedate>
           </db>
         </dbs>
         """
@@ -48,6 +58,11 @@ class KopisPerformanceDetailTests(TestCase):
 
         self.assertIsNotNone(detail)
         self.assertEqual(detail.sty, "This is the KOPIS synopsis.")
+        self.assertEqual(detail.mt13id, "STAGE001")
+        self.assertEqual(detail.entrpsnmP, "Production A")
+        self.assertEqual(detail.openrun, "Y")
+        self.assertEqual(detail.child, "Y")
+        self.assertEqual(detail.updatedate, "2026-01-02 10:30:00")
 
     def test_sync_performance_saves_synopsis(self):
         raw = RawPerformanceDetail(
@@ -62,18 +77,67 @@ class KopisPerformanceDetailTests(TestCase):
             prfruntime="90 minutes",
             prfage="All",
             sty="Stored synopsis from KOPIS.",
-            pcseguidance="Free",
-            genrenm="Play",
-            prfstate="Performing",
+            pcseguidance="R석 150,000원, S석 100,000원",
+            genrenm="뮤지컬",
+            prfstate="공연예정",
             poster="https://example.com/poster2.jpg",
             area="Seoul",
             dtguidance="Sat 15:00",
+            mt13id="STAGE002",
+            frstregdt="2026-01-10 09:00:00",
+            entrpsnmP="Production B",
+            entrpsnmA="Agency B",
+            entrpsnmH="Host B",
+            entrpsnmS="Organizer B",
+            openrun="Y",
+            child="Y",
+            festival="N",
+            musicallicense="Y",
+            updatedate="2026-01-11 10:00:00",
         )
 
         sync_performance(raw, client=None)
 
         performance = Performance.objects.get(performance_id="PF000002")
         self.assertEqual(performance.synopsis, "Stored synopsis from KOPIS.")
+        self.assertEqual(performance.genre_code, "GGGA")
+        self.assertEqual(performance.status_code, "01")
+        self.assertEqual(performance.stage_id, "STAGE002")
+        self.assertEqual(performance.min_price, 100000)
+        self.assertEqual(performance.max_price, 150000)
+        self.assertFalse(performance.is_free)
+        self.assertEqual(performance.price_parse_status, "parsed")
+        self.assertTrue(performance.openrun)
+        self.assertTrue(performance.is_child)
+        self.assertTrue(performance.is_musical_license)
+        self.assertEqual(performance.production_company, "Production B")
+        self.assertIsNotNone(performance.kopis_updated_at)
+
+    def test_parse_price_info_handles_free_and_unknown_values(self):
+        self.assertEqual(parse_price_info("무료"), (0, 0, True, "free"))
+        self.assertEqual(parse_price_info("가격 미정"), (None, None, False, "unparsed"))
+
+    def test_sync_venue_saves_ai_candidate_fields(self):
+        raw = RawVenueDetail(
+            mt10id="FC000100",
+            fcltynm="Venue With Parking",
+            sidonm="서울",
+            gugunnm="종로",
+            adres="서울 종로구",
+            la="37.1234567",
+            lo="127.1234567",
+            seatscale="500",
+            fcltychartr="문예회관",
+            relateurl="https://venue.example.com",
+            parkinglot="Y",
+        )
+
+        sync_venue(raw)
+
+        venue = Venue.objects.get(venue_id="FC000100")
+        self.assertEqual(venue.facility_characteristic, "문예회관")
+        self.assertEqual(venue.homepage_url, "https://venue.example.com")
+        self.assertTrue(venue.has_parking_lot)
 
 
 class PerformanceDetailAPITests(APITestCase):
