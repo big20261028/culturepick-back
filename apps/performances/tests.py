@@ -434,7 +434,9 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             performance_id="PFFILTER_MATCH",
             title="Alpha Musical",
             genre="\ubba4\uc9c0\uceec",
+            genre_code="GGGA",
             status="\uacf5\uc5f0\uc608\uc815",
+            status_code="01",
             start_date="2026-05-01",
             venue=self.seoul_venue,
         )
@@ -442,7 +444,9 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             performance_id="PFFILTER_STATUS",
             title="Alpha Musical Now",
             genre="\ubba4\uc9c0\uceec",
+            genre_code="GGGA",
             status="\uacf5\uc5f0\uc911",
+            status_code="02",
             start_date="2026-03-01",
             venue=self.seoul_venue,
         )
@@ -450,7 +454,9 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             performance_id="PFFILTER_GENRE",
             title="Alpha Concert",
             genre="\ub300\uc911\uc74c\uc545",
+            genre_code="CCCD",
             status="\uacf5\uc5f0\uc608\uc815",
+            status_code="01",
             start_date="2026-06-01",
             venue=self.seoul_venue,
         )
@@ -458,7 +464,9 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             performance_id="PFFILTER_REGION",
             title="Alpha Busan Musical",
             genre="\ubba4\uc9c0\uceec",
+            genre_code="GGGA",
             status="\uacf5\uc5f0\uc608\uc815",
+            status_code="01",
             start_date="2026-04-01",
             venue=self.busan_venue,
         )
@@ -508,4 +516,30 @@ class PerformanceFeatureFilterAPITests(APITestCase):
         self.assertEqual(
             [item["performance_id"] for item in response.data["searchData"]],
             ["PFFILTER_MATCH", "PFFILTER_REGION", "PFFILTER_STATUS"],
+        )
+
+    def test_feature_search_accepts_kopis_genre_code(self):
+        response = self.client.get(
+            reverse("performance_list"),
+            {"genre": "GGGA", "pageNum": 1, "pageSize": 10},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 3)
+        self.assertEqual(
+            [item["performance_id"] for item in response.data["searchData"]],
+            ["PFFILTER_MATCH", "PFFILTER_REGION", "PFFILTER_STATUS"],
+        )
+
+    def test_feature_search_accepts_kopis_status_code(self):
+        response = self.client.get(
+            reverse("performance_list"),
+            {"status": "01", "pageNum": 1, "pageSize": 10},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 3)
+        self.assertEqual(
+            [item["performance_id"] for item in response.data["searchData"]],
+            ["PFFILTER_GENRE", "PFFILTER_MATCH", "PFFILTER_REGION"],
         )

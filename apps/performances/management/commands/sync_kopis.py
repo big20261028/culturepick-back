@@ -61,7 +61,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--genre",
             default=None,
-            help="genre code (AAAA=play BBBB=musical CCCC=classic EEEE=dance GGGA=popular)",
+            help=(
+                "genre code (AAAA=play GGGA=musical CCCA=classic "
+                "CCCC=korean_music CCCD=popular_music BBBC=dance)"
+            ),
         )
         parser.add_argument(
             "--with-venues",
