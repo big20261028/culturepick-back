@@ -16,7 +16,7 @@ User = get_user_model()
 class LocalSignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, style={'input_type':'password'})
     password_confirm = serializers.CharField(write_only=True, style={'input_type' : 'password'})
-    nickname = serializers.CharField(required=True)
+    nickname = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = User
@@ -34,7 +34,7 @@ class LocalSignupSerializer(serializers.ModelSerializer):
         user = User.objects.create_user(
             email=validated_data['email'],
             password=validated_data['password'],
-            nickname=validated_data['nickname'],
+            nickname=validated_data.get('nickname', ''),
         )
         return user
 

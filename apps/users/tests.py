@@ -38,6 +38,21 @@ class LocalAuthAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(User.objects.filter(email="valid@example.com").exists())
 
+    def test_register_accepts_missing_nickname(self):
+        response = self.client.post(
+            reverse("register"),
+            {
+                "email": "no-nickname@example.com",
+                "password": "ValidPass123!",
+                "password_confirm": "ValidPass123!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(email="no-nickname@example.com")
+        self.assertEqual(user.nickname, "")
+
 
 class SocialAuthAPITests(APITestCase):
     def test_google_social_login_creates_user_and_tokens(self):
