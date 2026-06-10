@@ -10,10 +10,12 @@ MIDDLEWARE += ["debug_toolbar.middleware.DebugToolbarMiddleware"]  # noqa: F405
 
 INTERNAL_IPS = ["127.0.0.1"]
 
-# ── CORS: 로컬에서 Next.js 개발 서버 허용 ─────────────────────────────
+# ── CORS: 로컬 프론트 개발 서버 허용 ─────────────────────────────────
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 # ── 이메일: 콘솔 출력 ─────────────────────────────────────────────────

@@ -13,7 +13,6 @@ from apps.logs.services import (
     safe_record_view_log,
 )
 
-from .kopis.codes import GENRE_NAME_TO_CODE, STATUS_NAME_TO_CODE
 from .models import Performance, UsersPerformanceAction
 from .serializers import (
     PerformanceActionSerializer,
@@ -23,15 +22,21 @@ from .serializers import (
 
 
 GENRE_FILTERS = {
-    "musical": ["musical", "뮤지컬"],
-    "play": ["play", "연극"],
-    "classic": ["classic", "클래식", "서양음악"],
-    "koreanMusic": ["koreanMusic", "korean_music", "국악", "한국음악"],
-    "concert": ["concert", "콘서트", "대중음악"],
-    "dancing": ["dancing", "dance", "무용", "대중무용", "서커스", "마술", "복합"],
+    "AAAA": ["AAAA", "연극"],
+    "GGGA": ["GGGA", "뮤지컬"],
+    "CCCA": ["CCCA", "클래식", "서양음악"],
+    "CCCC": ["CCCC", "국악", "한국음악"],
+    "CCCD": ["CCCD", "콘서트", "대중음악"],
+    "BBBC": ["BBBC", "무용", "대중무용"],
+    "EEEA": ["EEEA", "서커스", "마술"],
+    "EEEB": ["EEEB", "복합"],
+    "musical": ["GGGA", "musical", "뮤지컬"],
+    "play": ["AAAA", "play", "연극"],
+    "classic": ["CCCA", "classic", "클래식", "서양음악"],
+    "koreanMusic": ["CCCC", "koreanMusic", "korean_music", "국악", "한국음악"],
+    "concert": ["CCCD", "concert", "콘서트", "대중음악"],
+    "dancing": ["BBBC", "EEEA", "EEEB", "dancing", "dance", "무용", "대중무용", "서커스", "마술", "복합"],
 }
-
-GENRE_CODES = set(GENRE_NAME_TO_CODE.values())
 
 REGION_FILTERS = {
     "seoul": ["서울"],
@@ -49,8 +54,6 @@ REGION_FILTERS = {
     "jeju": ["제주", "기타", "미분류", "해외"],
     "제주/기타": ["제주", "기타", "미분류", "해외"],
 }
-
-STATUS_CODES = set(STATUS_NAME_TO_CODE.values())
 
 STATUS_FILTERS = {
     "upcomming": ["upcomming", "upcoming", "공연예정"],
@@ -180,12 +183,9 @@ class PerformanceListView(ListAPIView):
 
         query = Q()
         for item in self._split_param(genre):
-            code = item.upper()
-            if code in GENRE_CODES:
-                query |= Q(genre_code__iexact=code)
             values = GENRE_FILTERS.get(item, [item])
             for value in values:
-                query |= Q(genre__icontains=value)
+                query |= Q(genre_code__iexact=value) | Q(genre__icontains=value)
         return queryset.filter(query)
 
     def _apply_region_filter(self, queryset, local):
@@ -209,9 +209,6 @@ class PerformanceListView(ListAPIView):
 
         query = Q()
         for item in self._split_param(performance_status):
-            code = item.zfill(2)
-            if code in STATUS_CODES:
-                query |= Q(status_code__iexact=code)
             values = STATUS_FILTERS.get(item, [item])
             for value in values:
                 query |= Q(status__iexact=value)
