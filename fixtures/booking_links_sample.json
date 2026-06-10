@@ -4,7 +4,7 @@
     "pk": 900001,
     "fields": {
       "performance": "PF900001",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900001"
     }
   },
@@ -13,7 +13,7 @@
     "pk": 900002,
     "fields": {
       "performance": "PF900002",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900002"
     }
   },
@@ -22,7 +22,7 @@
     "pk": 900003,
     "fields": {
       "performance": "PF900003",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900003"
     }
   },
@@ -31,7 +31,7 @@
     "pk": 900004,
     "fields": {
       "performance": "PF900004",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900004"
     }
   },
@@ -40,7 +40,7 @@
     "pk": 900005,
     "fields": {
       "performance": "PF900005",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900005"
     }
   },
@@ -49,7 +49,7 @@
     "pk": 900006,
     "fields": {
       "performance": "PF900006",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900006"
     }
   },
@@ -58,7 +58,7 @@
     "pk": 900007,
     "fields": {
       "performance": "PF900007",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900007"
     }
   },
@@ -67,7 +67,7 @@
     "pk": 900008,
     "fields": {
       "performance": "PF900008",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900008"
     }
   },
@@ -76,7 +76,7 @@
     "pk": 900009,
     "fields": {
       "performance": "PF900009",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900009"
     }
   },
@@ -85,7 +85,7 @@
     "pk": 900010,
     "fields": {
       "performance": "PF900010",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900010"
     }
   },
@@ -94,7 +94,7 @@
     "pk": 900011,
     "fields": {
       "performance": "PF900011",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900011"
     }
   },
@@ -103,7 +103,7 @@
     "pk": 900012,
     "fields": {
       "performance": "PF900012",
-      "site_name": "?? ???",
+      "site_name": "인터파크 티켓",
       "url": "https://example.com/tickets/PF900012"
     }
   }
