@@ -412,6 +412,40 @@ class PerformanceListSearchAPITests(APITestCase):
         self.assertEqual(response.data["total"], 3)
         self.assertEqual(len(response.data["searchData"]), 1)
 
+    def test_integrated_keyword_search_returns_user_action_flags(self):
+        user = User.objects.create_user(
+            email="search-actions@example.com",
+            password="ValidPass123!",
+            nickname="search-actions",
+        )
+        title_match = Performance.objects.get(performance_id="PFSEARCH_TITLE")
+        cast_match = Performance.objects.get(performance_id="PFSEARCH_CAST")
+        UsersPerformanceAction.objects.create(
+            user=user,
+            performance=title_match,
+            action_type=UsersPerformanceAction.ActionType.INTEREST,
+        )
+        UsersPerformanceAction.objects.create(
+            user=user,
+            performance=cast_match,
+            action_type=UsersPerformanceAction.ActionType.WATCHLIST,
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(
+            reverse("performance_list"),
+            {"keyword": self.keyword, "pageNum": 1, "pageSize": 10},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = {item["performance_id"]: item for item in response.data["searchData"]}
+        self.assertTrue(results["PFSEARCH_TITLE"]["is_interested"])
+        self.assertFalse(results["PFSEARCH_TITLE"]["is_watchlisted"])
+        self.assertFalse(results["PFSEARCH_CAST"]["is_interested"])
+        self.assertTrue(results["PFSEARCH_CAST"]["is_watchlisted"])
+        self.assertFalse(results["PFSEARCH_VENUE"]["is_interested"])
+        self.assertFalse(results["PFSEARCH_VENUE"]["is_watchlisted"])
+
 
 class PerformanceFeatureFilterAPITests(APITestCase):
     def setUp(self):
@@ -501,6 +535,40 @@ class PerformanceFeatureFilterAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["total"], 1)
         self.assertEqual(response.data["searchData"][0]["performance_id"], "PFFILTER_REGION")
+
+    def test_feature_search_returns_user_action_flags(self):
+        user = User.objects.create_user(
+            email="feature-actions@example.com",
+            password="ValidPass123!",
+            nickname="feature-actions",
+        )
+        match = Performance.objects.get(performance_id="PFFILTER_MATCH")
+        status_match = Performance.objects.get(performance_id="PFFILTER_STATUS")
+        UsersPerformanceAction.objects.create(
+            user=user,
+            performance=match,
+            action_type=UsersPerformanceAction.ActionType.INTEREST,
+        )
+        UsersPerformanceAction.objects.create(
+            user=user,
+            performance=status_match,
+            action_type=UsersPerformanceAction.ActionType.WATCHLIST,
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(
+            reverse("performance_list"),
+            {"genre": "musical", "pageNum": 1, "pageSize": 10},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = {item["performance_id"]: item for item in response.data["searchData"]}
+        self.assertTrue(results["PFFILTER_MATCH"]["is_interested"])
+        self.assertFalse(results["PFFILTER_MATCH"]["is_watchlisted"])
+        self.assertFalse(results["PFFILTER_STATUS"]["is_interested"])
+        self.assertTrue(results["PFFILTER_STATUS"]["is_watchlisted"])
+        self.assertFalse(results["PFFILTER_REGION"]["is_interested"])
+        self.assertFalse(results["PFFILTER_REGION"]["is_watchlisted"])
 
     def test_feature_search_genre_page_defaults_to_newest_start_date(self):
         response = self.client.get(

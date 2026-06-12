@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Case, F, IntegerField, Q, Value, When
+from django.db.models import Case, F, IntegerField, Prefetch, Q, Value, When
 from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.pagination import PageNumberPagination, _positive_int
@@ -63,6 +63,19 @@ STATUS_FILTERS = {
 }
 
 
+def _prefetch_current_user_actions(queryset, user):
+    if not user or not user.is_authenticated:
+        return queryset
+
+    return queryset.prefetch_related(
+        Prefetch(
+            "users_performance_actions",
+            queryset=UsersPerformanceAction.objects.filter(user=user),
+            to_attr="current_user_actions",
+        )
+    )
+
+
 class PerformanceSearchPagination(PageNumberPagination):
     page_size = 20
     max_page_size = 100
@@ -114,6 +127,7 @@ class PerformanceListView(ListAPIView):
 
     def get_queryset(self):
         queryset = Performance.objects.select_related("venue")
+        queryset = _prefetch_current_user_actions(queryset, self.request.user)
         keyword = self.request.query_params.get("keyword", "").strip()
         has_feature_filters = any(
             self._get_query_param(name) for name in ("genre", "local", "region", "status")
@@ -249,6 +263,9 @@ class PerformanceDetailView(RetrieveAPIView):
         Performance.objects.select_related("venue")
         .prefetch_related("images", "booking_links")
     )
+
+    def get_queryset(self):
+        return _prefetch_current_user_actions(super().get_queryset(), self.request.user)
 
     def get_object(self):
         performance = super().get_object()

@@ -43,6 +43,8 @@ class PerformanceActionSerializer(serializers.Serializer):
 class PerformanceListSerializer(serializers.ModelSerializer):
     venue = VenueSerializer(read_only=True)
     search_score = serializers.IntegerField(read_only=True)
+    is_interested = serializers.SerializerMethodField()
+    is_watchlisted = serializers.SerializerMethodField()
 
     class Meta:
         model = Performance
@@ -67,8 +69,29 @@ class PerformanceListSerializer(serializers.ModelSerializer):
             'venue',
             'view_count',
             'zzim_count',
+            'is_interested',
+            'is_watchlisted',
             'search_score',
         )
+
+    def _get_user_action_types(self, obj):
+        if hasattr(obj, 'current_user_actions'):
+            return {action.action_type for action in obj.current_user_actions}
+
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return set()
+
+        return set(
+            obj.users_performance_actions.filter(user=request.user)
+            .values_list('action_type', flat=True)
+        )
+
+    def get_is_interested(self, obj):
+        return UsersPerformanceAction.ActionType.INTEREST in self._get_user_action_types(obj)
+
+    def get_is_watchlisted(self, obj):
+        return UsersPerformanceAction.ActionType.WATCHLIST in self._get_user_action_types(obj)
 
 
 class PerformanceDetailSerializer(serializers.ModelSerializer):
@@ -84,20 +107,21 @@ class PerformanceDetailSerializer(serializers.ModelSerializer):
         # fields = ()
         exclude = ('synced_at',)
 
-    def get_is_interested(self, obj):
+    def _get_user_action_types(self, obj):
+        if hasattr(obj, 'current_user_actions'):
+            return {action.action_type for action in obj.current_user_actions}
+
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
-            return False
-        return obj.users_performance_actions.filter(
-            user=request.user,
-            action_type='interest'
-        ).exists()
+            return set()
+
+        return set(
+            obj.users_performance_actions.filter(user=request.user)
+            .values_list('action_type', flat=True)
+        )
+
+    def get_is_interested(self, obj):
+        return UsersPerformanceAction.ActionType.INTEREST in self._get_user_action_types(obj)
     
     def get_is_watchlisted(self, obj):
-        request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return False
-        return obj.users_performance_actions.filter(
-            user=request.user,
-            action_type='watchlist'
-        ).exists()
+        return UsersPerformanceAction.ActionType.WATCHLIST in self._get_user_action_types(obj)
