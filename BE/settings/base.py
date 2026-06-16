@@ -44,6 +44,7 @@ LOCAL_APPS = [
     "apps.users",
     "apps.performances",
     "apps.logs",
+    "apps.recommendations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -180,6 +181,10 @@ CELERY_BEAT_SCHEDULE = {
 
 # ── KOPIS API ─────────────────────────────────────────────────────────
 KOPIS_API_KEY = env("KOPIS_API_KEY", default="")
+
+# OpenAI recommendation API
+OPENAI_API_SECRET_KEY = env("OPENAI_API_SECRET_KEY", default=env("OPENAI_API_KEY", default=""))
+OPENAI_RECOMMENDATION_MODEL = env("OPENAI_RECOMMENDATION_MODEL", default="gpt-4o-mini")
 
 # ── 로깅 ──────────────────────────────────────────────────────────────
 LOGGING = {

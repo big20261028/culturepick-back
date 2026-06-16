@@ -9,6 +9,7 @@ urlpatterns = [
     path("api/v1/auth/", include("apps.users.urls")),
     path("api/v1/performances/", include("apps.performances.urls")),
     path("api/v1/logs/", include("apps.logs.urls")),
+    path("api/v1/recommendations/", include("apps.recommendations.urls")),
 
     # 소셜 로그인
     path("social/", include("social_django.urls", namespace="social")),
