@@ -16,6 +16,7 @@ RECOMMENDATION_SCHEMA = {
         "summary": {"type": "string"},
         "recommendations": {
             "type": "array",
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -36,7 +37,7 @@ def request_openai_recommendations(*, user_request: str, profile_snapshot: dict,
     api_key = getattr(settings, "OPENAI_API_SECRET_KEY", "")
     model_name = getattr(settings, "OPENAI_RECOMMENDATION_MODEL", "gpt-4o-mini")
     if not api_key:
-        raise OpenAIRecommendationError("OPENAI_API_SECRET_KEY is not configured.")
+        raise OpenAIRecommendationError("OPENAI_API_SECRET_KEY or OPENAI_API_KEY is not configured.")
     if not candidates:
         raise OpenAIRecommendationError("No recommendation candidates available.")
 
@@ -56,7 +57,7 @@ def request_openai_recommendations(*, user_request: str, profile_snapshot: dict,
     system_prompt = (
         "You are a Korean performing-arts recommendation assistant. "
         "Recommend only from the provided candidates. "
-        "Never invent a performance_id. "
+        "Never invent a performance_id, title, venue, date, price, or external fact. "
         "Return concise Korean reasons grounded in candidate data and user preferences."
     )
 

@@ -10,11 +10,39 @@ from apps.performances.models import Performance
 from .models import RecommendationSession
 from .serializers import (
     AIRecommendationRequestSerializer,
+    RecommendationCandidateRequestSerializer,
+    RecommendationCandidateSerializer,
     RecommendationFeedbackSerializer,
     RecommendationItemSerializer,
+    serialize_candidate,
 )
-from .services import create_ai_recommendation
+from .services import create_ai_recommendation, get_recommendation_candidates
 from .services import record_feedback_and_update_quality
+
+
+class RecommendationCandidateView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RecommendationCandidateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        profile_snapshot, candidates = get_recommendation_candidates(
+            user=request_user_or_none(request),
+            message=serializer.validated_data["message"],
+            limit=serializer.validated_data["limit"],
+        )
+        candidate_serializer = RecommendationCandidateSerializer(
+            [serialize_candidate(candidate) for candidate in candidates],
+            many=True,
+            context={"request": request},
+        )
+        return Response({
+            "message": serializer.validated_data["message"],
+            "profile": profile_snapshot,
+            "total": len(candidate_serializer.data),
+            "candidates": candidate_serializer.data,
+        })
 
 
 class AIRecommendationView(APIView):
@@ -37,13 +65,40 @@ class AIRecommendationView(APIView):
             context={"request": request},
         )
 
-        return Response({
+        recommendations = [
+            {
+                "performance_id": item["performance"]["performance_id"],
+                "title": item["performance"]["title"],
+                "reason": item["reason"],
+                "rank": item["rank"],
+                "source": item["source"],
+                "score": item["score"],
+            }
+            for item in result_serializer.data
+        ]
+        response_data = {
             "session_id": session.id,
             "summary": session.parsed_response.get("summary", ""),
+            "message": session.parsed_response.get("summary", ""),
             "fallback_used": session.fallback_used,
             "validation_status": session.validation_status,
+            "recommendations": recommendations,
             "results": result_serializer.data,
-        }, status=status.HTTP_200_OK)
+        }
+        if serializer.validated_data["include_candidates"]:
+            profile_snapshot, candidates = get_recommendation_candidates(
+                user=request_user_or_none(request),
+                message=serializer.validated_data["message"],
+                limit=serializer.validated_data["candidate_limit"],
+            )
+            candidate_serializer = RecommendationCandidateSerializer(
+                [serialize_candidate(candidate) for candidate in candidates],
+                many=True,
+                context={"request": request},
+            )
+            response_data["profile"] = profile_snapshot
+            response_data["candidates"] = candidate_serializer.data
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class RecommendationFeedbackView(APIView):

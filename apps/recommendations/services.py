@@ -33,6 +33,7 @@ ACTION_WEIGHTS = {
 VIEW_WEIGHT = 0.8
 SEARCH_FILTER_WEIGHT = 0.7
 SEARCH_KEYWORD_WEIGHT = 0.25
+REQUEST_TEXT_WEIGHT = 1.35
 
 FEEDBACK_SCORE_WEIGHTS = {
     RecommendationFeedback.FeedbackType.CLICK: 1,
@@ -75,6 +76,50 @@ GENRE_ALIASES = {
     "BBBC": ["dance", "dancing"],
     "EEEA": ["circus", "magic"],
     "EEEB": ["complex"],
+}
+
+REQUEST_GENRE_TERMS = {
+    "AAAA": ["??", "play", "drama"],
+    "GGGA": ["???", "musical"],
+    "CCCA": ["???", "classic", "orchestra", "?????"],
+    "CCCC": ["??", "korean music", "koreanmusic"],
+    "CCCD": ["???", "concert", "??", "band"],
+    "BBBC": ["??", "??", "dance", "ballet", "??"],
+    "EEEA": ["???", "??", "magic", "circus"],
+    "EEEB": ["??", "complex"],
+}
+
+REQUEST_REGION_TERMS = {
+    "??": ["??", "seoul"],
+    "??": ["??", "gyeonggi"],
+    "??": ["??", "incheon"],
+    "??": ["??", "busan"],
+    "??": ["??", "daegu"],
+    "??": ["??", "daejeon"],
+    "??": ["??", "gwangju"],
+    "??": ["??", "ulsan"],
+    "??": ["??", "sejong"],
+    "??": ["??", "gangwon"],
+    "??": ["??", "chungbuk"],
+    "??": ["??", "chungnam"],
+    "??": ["??", "jeonbuk"],
+    "??": ["??", "jeonnam"],
+    "??": ["??", "gyeongbuk"],
+    "??": ["??", "gyeongnam"],
+    "??": ["??", "jeju"],
+}
+
+REQUEST_PRICE_TERMS = {
+    "free": ["??", "free"],
+    "low": ["??", "?", "3??", "30000", "low"],
+    "mid": ["10??", "100000", "???", "??", "mid"],
+    "high": ["????", "??", "vip", "high"],
+}
+
+REQUEST_FEATURE_TERMS = {
+    "child": ["??", "???", "??", "family", "kid", "children"],
+    "festival": ["??", "????", "festival"],
+    "openrun": ["???", "openrun", "open run"],
 }
 
 
@@ -250,19 +295,56 @@ def build_performance_source_summary(performance: Performance) -> dict:
     }
 
 
-def get_recommendation_candidates(user=None, limit=30, pool_size=500) -> tuple[dict, list[Candidate]]:
+def get_recommendation_candidates(user=None, message="", limit=30, pool_size=500) -> tuple[dict, list[Candidate]]:
     profile = get_or_build_user_profile(user)
     user_vector = profile.vector_data if profile else {}
+    request_vector = build_request_vector(message)
+    combined_vector = _merge_preference_vectors(user_vector, request_vector)
     profile_snapshot = {
-        "vector_data": user_vector,
+        "vector_data": combined_vector,
+        "user_vector_data": user_vector,
+        "request_vector_data": request_vector,
         "source_summary": profile.source_summary if profile else {},
         "is_personalized": bool(user_vector),
+        "has_request_signal": bool(request_vector),
     }
 
-    queryset = _candidate_queryset(user, user_vector, pool_size)
-    candidates = [_score_candidate(performance, user_vector) for performance in queryset]
+    queryset = _candidate_queryset(user, combined_vector, pool_size)
+    candidates = [_score_candidate(performance, combined_vector) for performance in queryset]
     candidates.sort(key=lambda candidate: candidate.score, reverse=True)
     return profile_snapshot, candidates[:limit]
+
+
+def build_request_vector(message: str) -> dict[str, float]:
+    scores = defaultdict(float)
+    if not message:
+        return {}
+
+    for genre_code, terms in REQUEST_GENRE_TERMS.items():
+        if _contains_any(message, terms):
+            normalized_code = _normalize_token(genre_code)
+            scores[f"genre:{normalized_code}"] += 1.0
+            for alias in GENRE_ALIASES.get(genre_code, []):
+                scores[f"genre:{_normalize_token(alias)}"] += 0.85
+
+    for region, terms in REQUEST_REGION_TERMS.items():
+        if _contains_any(message, terms):
+            scores[f"region:{_normalize_token(region)}"] += 1.0
+            for term in terms:
+                scores[f"region:{_normalize_token(term)}"] += 0.8
+
+    for bucket, terms in REQUEST_PRICE_TERMS.items():
+        if _contains_any(message, terms):
+            scores[f"price:{bucket}"] += 1.0
+
+    for feature, terms in REQUEST_FEATURE_TERMS.items():
+        if _contains_any(message, terms):
+            scores[f"feature:{feature}"] += 1.0
+
+    for token in _text_tokens(message, limit=8):
+        scores[f"keyword:{token}"] += 0.3
+
+    return _normalize_scores(scores)
 
 
 def _candidate_queryset(user, user_vector: dict[str, float], pool_size: int):
@@ -299,6 +381,19 @@ def _build_preference_filter(user_vector):
             query |= Q(venue__sido__icontains=value) | Q(venue__gugun__icontains=value)
             has_query = True
     return query if has_query else None
+
+
+def _merge_preference_vectors(user_vector: dict[str, float], request_vector: dict[str, float]) -> dict[str, float]:
+    combined = defaultdict(float)
+    for key, value in (user_vector or {}).items():
+        combined[key] += value
+    for key, value in (request_vector or {}).items():
+        combined[key] += value * REQUEST_TEXT_WEIGHT
+    return {
+        key: round(value, 4)
+        for key, value in combined.items()
+        if value > 0
+    }
 
 
 def _score_candidate(performance: Performance, user_vector: dict[str, float]) -> Candidate:
@@ -339,6 +434,7 @@ def _score_candidate(performance: Performance, user_vector: dict[str, float]) ->
 def create_ai_recommendation(user, message="", limit=5, candidate_limit=30) -> RecommendationSession:
     profile_snapshot, candidates = get_recommendation_candidates(
         user=user,
+        message=message,
         limit=max(candidate_limit, limit),
     )
     candidate_snapshot = [_candidate_payload(candidate) for candidate in candidates]
@@ -651,6 +747,12 @@ def _split_vector_key(key: str):
 
 def _normalize_token(value: str) -> str:
     return (value or "").strip().lower().replace(" ", "").replace("-", "_")
+
+
+def _contains_any(value: str, terms: list[str]) -> bool:
+    lowered = (value or "").lower()
+    normalized = _normalize_token(value)
+    return any((term or "").lower() in lowered or _normalize_token(term) in normalized for term in terms)
 
 
 def _text_tokens(value: str, limit=5):

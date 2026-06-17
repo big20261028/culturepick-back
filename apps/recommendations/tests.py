@@ -92,6 +92,32 @@ class RecommendationAPITests(APITestCase):
         self.assertGreater(candidates[0].score, candidates[1].score)
         self.assertNotEqual(candidates[0].performance, self.liked_performance)
 
+    def test_candidate_scoring_uses_request_prompt_signal(self):
+        profile, candidates = get_recommendation_candidates(
+            user=self.user,
+            message="play recommendation",
+            limit=5,
+        )
+
+        self.assertTrue(profile["has_request_signal"])
+        self.assertEqual(candidates[0].performance, self.play_candidate)
+
+    def test_candidate_api_returns_scored_candidates(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse("recommendation_candidates"),
+            {"prompt": "??? ?? ???", "limit": 2},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["message"], "??? ?? ???")
+        self.assertEqual(response.data["total"], 2)
+        self.assertIn("profile", response.data)
+        self.assertIn("performance", response.data["candidates"][0])
+        self.assertIn("reasons", response.data["candidates"][0])
+
     @override_settings(OPENAI_API_SECRET_KEY="")
     def test_ai_recommendation_falls_back_when_openai_is_not_configured(self):
         self.client.force_authenticate(user=self.user)
@@ -108,6 +134,27 @@ class RecommendationAPITests(APITestCase):
         self.assertEqual(len(response.data["results"]), 2)
         self.assertEqual(RecommendationSession.objects.count(), 1)
         self.assertEqual(RecommendationItem.objects.count(), 2)
+
+    @override_settings(OPENAI_API_SECRET_KEY="")
+    def test_ai_recommendation_accepts_prompt_alias_and_candidate_preview(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse("recommendation_ai"),
+            {
+                "prompt": "???? ??? ????",
+                "limit": 1,
+                "include_candidates": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["fallback_used"])
+        self.assertIn("recommendations", response.data)
+        self.assertIn("candidates", response.data)
+        session = RecommendationSession.objects.get(pk=response.data["session_id"])
+        self.assertEqual(session.request_text, "???? ??? ????")
 
     @override_settings(OPENAI_API_SECRET_KEY="test-key", OPENAI_RECOMMENDATION_MODEL="test-model")
     @patch("apps.recommendations.services.request_openai_recommendations")
