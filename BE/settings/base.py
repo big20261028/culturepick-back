@@ -84,12 +84,25 @@ TEMPLATES = [
 ]
 
 # ── 데이터베이스 ──────────────────────────────────────────────────────
-DATABASES = {
-    "default": env.db(
+database_url = env("DATABASE_URL", default="")
+if database_url:
+    default_database = env.db("DATABASE_URL")
+elif env("DB_HOST", default=""):
+    default_database = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": env("DB_NAME", default="culturepick"),
+        "USER": env("DB_USER", default="postgres"),
+        "PASSWORD": env("DB_PASSWORD", default=""),
+        "HOST": env("DB_HOST"),
+        "PORT": env("DB_PORT", default="5432"),
+    }
+else:
+    default_database = env.db(
         "DATABASE_URL",
         default="postgresql://postgres:postgres@localhost:5432/culturepick",
     )
-}
+
+DATABASES = {"default": default_database}
 DATABASES["default"]["ATOMIC_REQUESTS"] = True  # 요청 단위 트랜잭션
 
 # ── 커스텀 유저 모델 ──────────────────────────────────────────────────

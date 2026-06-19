@@ -118,7 +118,7 @@ NAVER_CLIENT_SECRET=your-naver-client-secret
 ### 4. Docker로 DB 실행
 
 ```bash
-docker compose up -d db redis
+docker compose -f docker-compose.local.yml up -d db redis
 ```
 
 ### 5. 마이그레이션
@@ -308,4 +308,93 @@ http://localhost:5173/auth/callback/naver
 | GOOGLE_CLIENT_SECRET | 구글 클라이언트 시크릿 | 소셜 로그인 사용 시 |
 | NAVER_CLIENT_ID | 네이버 클라이언트 ID | 소셜 로그인 사용 시 |
 | NAVER_CLIENT_SECRET | 네이버 클라이언트 시크릿 | 소셜 로그인 사용 시 |
+
+---
+
+## AWS Elastic Beanstalk 배포
+
+### 1. Elastic Beanstalk 환경 변수
+
+Elastic Beanstalk 환경의 `Configuration > Software > Environment properties`에 값을 등록합니다.
+
+```env
+DJANGO_SECRET_KEY=your-production-secret
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=culturepick.ap-northeast-2.elasticbeanstalk.com
+DJANGO_SETTINGS_MODULE=BE.settings.production
+
+DATABASE_URL=postgresql://USER:PASSWORD@RDS_ENDPOINT:5432/culturepick
+
+KOPIS_API_KEY=your-kopis-api-key
+OPENAI_API_SECRET_KEY=your-openai-key
+OPENAI_RECOMMENDATION_MODEL=gpt-4o-mini
+
+CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com
+CSRF_TRUSTED_ORIGINS=https://your-frontend-domain.com
+```
+
+`DATABASE_URL` 대신 아래 `DB_*` 환경변수도 사용할 수 있습니다.
+
+```env
+DB_NAME=culturepick
+DB_USER=your-rds-username
+DB_PASSWORD=your-rds-password
+DB_HOST=your-rds-endpoint
+DB_PORT=5432
+```
+
+초기 Beanstalk 기본 HTTP 도메인으로 테스트할 때는 아래 값들을 `False`/`0`으로 둡니다. HTTPS와 커스텀 도메인을 붙인 뒤 `True`로 올립니다.
+
+```env
+DJANGO_SECURE_SSL_REDIRECT=False
+DJANGO_SESSION_COOKIE_SECURE=False
+DJANGO_CSRF_COOKIE_SECURE=False
+DJANGO_SECURE_HSTS_SECONDS=0
+```
+
+### 2. 배포 파일 만들기
+
+루트에 있는 `Dockerfile`이 Elastic Beanstalk Docker 배포에서 사용됩니다. zip 파일을 만들 때 `Dockerfile`, `manage.py`, `requirements/`, `BE/`, `apps/`가 zip 최상단에 있어야 합니다.
+
+예시 PowerShell:
+
+```powershell
+Compress-Archive -Path Dockerfile,docker-compose.yml,manage.py,requirements,BE,apps,common,docker,.ebignore -DestinationPath culturepick-backend.zip -Force
+```
+
+### 3. 배포 후 확인
+
+배포가 끝나면 먼저 health endpoint를 확인합니다.
+
+```text
+http://culturepick.ap-northeast-2.elasticbeanstalk.com/health/
+```
+
+정상 응답:
+
+```json
+{"status": "ok"}
+```
+
+### 4. migrate
+
+현재 Docker entrypoint가 컨테이너 시작 시 아래 작업을 자동 실행합니다.
+
+```bash
+python manage.py collectstatic --noinput
+python manage.py migrate --noinput
+```
+
+수동으로 확인해야 할 때는 Elastic Beanstalk 인스턴스에 SSH 접속 후 실행 중인 컨테이너 안에서 실행합니다.
+
+```bash
+sudo docker ps
+sudo docker exec -it <container_id> python manage.py migrate
+```
+
+### 5. 주의
+
+- `.env`, DB 비밀번호, API Key는 git에 올리지 않습니다.
+- `.env.example`에도 실제 비밀번호나 API Key를 적지 않습니다.
+- 캡처나 채팅에 노출된 키는 AWS/OpenAI/소셜 콘솔에서 재발급하는 것을 권장합니다.
 

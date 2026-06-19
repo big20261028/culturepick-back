@@ -95,7 +95,7 @@ class RecommendationAPITests(APITestCase):
     def test_candidate_scoring_uses_request_prompt_signal(self):
         profile, candidates = get_recommendation_candidates(
             user=self.user,
-            message="play recommendation",
+            message="연극 추천",
             limit=5,
         )
 
@@ -107,12 +107,12 @@ class RecommendationAPITests(APITestCase):
 
         response = self.client.post(
             reverse("recommendation_candidates"),
-            {"prompt": "??? ?? ???", "limit": 2},
+            {"prompt": "뮤지컬 추천해줘", "limit": 2},
             format="json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["message"], "??? ?? ???")
+        self.assertEqual(response.data["message"], "뮤지컬 추천해줘")
         self.assertEqual(response.data["total"], 2)
         self.assertIn("profile", response.data)
         self.assertIn("performance", response.data["candidates"][0])
@@ -142,7 +142,7 @@ class RecommendationAPITests(APITestCase):
         response = self.client.post(
             reverse("recommendation_ai"),
             {
-                "prompt": "???? ??? ????",
+                "prompt": "서울에서 볼 공연 추천",
                 "limit": 1,
                 "include_candidates": True,
             },
@@ -153,8 +153,9 @@ class RecommendationAPITests(APITestCase):
         self.assertTrue(response.data["fallback_used"])
         self.assertIn("recommendations", response.data)
         self.assertIn("candidates", response.data)
+        self.assertIn("performance_id", response.data["candidates"][0])
         session = RecommendationSession.objects.get(pk=response.data["session_id"])
-        self.assertEqual(session.request_text, "???? ??? ????")
+        self.assertEqual(session.request_text, "서울에서 볼 공연 추천")
 
     @override_settings(OPENAI_API_SECRET_KEY="test-key", OPENAI_RECOMMENDATION_MODEL="test-model")
     @patch("apps.recommendations.services.request_openai_recommendations")
@@ -218,6 +219,27 @@ class RecommendationAPITests(APITestCase):
         session = RecommendationSession.objects.get(pk=session_id)
         self.assertEqual(session.quality_score, 4)
         self.assertFalse(TrainingExampleCandidate.objects.exists())
+
+    @override_settings(OPENAI_API_SECRET_KEY="")
+    def test_feedback_api_rejects_performance_outside_session(self):
+        self.client.force_authenticate(user=self.user)
+        recommendation_response = self.client.post(
+            reverse("recommendation_ai"),
+            {"message": "뮤지컬 추천해줘", "limit": 1},
+            format="json",
+        )
+        session_id = recommendation_response.data["session_id"]
+
+        response = self.client.post(
+            reverse("recommendation_feedback", kwargs={"session_id": session_id}),
+            {
+                "performance_id": self.liked_performance.performance_id,
+                "feedback_type": RecommendationFeedback.FeedbackType.THUMBS_UP,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     @override_settings(OPENAI_API_SECRET_KEY="test-key", OPENAI_RECOMMENDATION_MODEL="test-model")
     @patch("apps.recommendations.services.request_openai_recommendations")

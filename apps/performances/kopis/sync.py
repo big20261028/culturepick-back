@@ -258,7 +258,21 @@ def sync_performance(raw: RawPerformanceDetail, client: KopisClient) -> tuple[Pe
         action, raw.prfnm, raw.mt20id,
         len(raw.styurls), len(raw.relates),
     )
+    _invalidate_recommendation_vector(perf)
     return perf, created
+
+
+def _invalidate_recommendation_vector(performance: Performance):
+    try:
+        from apps.recommendations.services import invalidate_performance_vector
+
+        invalidate_performance_vector(performance)
+    except Exception as exc:
+        logger.warning(
+            "[Sync] recommendation vector invalidation failed performance=%s: %s",
+            performance.pk,
+            exc,
+        )
 
 
 def sync_performances_in_range(

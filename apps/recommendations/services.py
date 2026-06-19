@@ -79,47 +79,47 @@ GENRE_ALIASES = {
 }
 
 REQUEST_GENRE_TERMS = {
-    "AAAA": ["??", "play", "drama"],
-    "GGGA": ["???", "musical"],
-    "CCCA": ["???", "classic", "orchestra", "?????"],
-    "CCCC": ["??", "korean music", "koreanmusic"],
-    "CCCD": ["???", "concert", "??", "band"],
-    "BBBC": ["??", "??", "dance", "ballet", "??"],
-    "EEEA": ["???", "??", "magic", "circus"],
-    "EEEB": ["??", "complex"],
+    "AAAA": ["연극", "극", "드라마", "play", "drama"],
+    "GGGA": ["뮤지컬", "musical"],
+    "CCCA": ["클래식", "서양음악", "오케스트라", "classic", "orchestra"],
+    "CCCC": ["국악", "한국음악", "전통음악", "korean music", "koreanmusic"],
+    "CCCD": ["콘서트", "대중음악", "공연", "concert", "band"],
+    "BBBC": ["무용", "춤", "발레", "댄스", "dance", "ballet"],
+    "EEEA": ["서커스", "마술", "magic", "circus"],
+    "EEEB": ["복합", "복합장르", "complex"],
 }
 
 REQUEST_REGION_TERMS = {
-    "??": ["??", "seoul"],
-    "??": ["??", "gyeonggi"],
-    "??": ["??", "incheon"],
-    "??": ["??", "busan"],
-    "??": ["??", "daegu"],
-    "??": ["??", "daejeon"],
-    "??": ["??", "gwangju"],
-    "??": ["??", "ulsan"],
-    "??": ["??", "sejong"],
-    "??": ["??", "gangwon"],
-    "??": ["??", "chungbuk"],
-    "??": ["??", "chungnam"],
-    "??": ["??", "jeonbuk"],
-    "??": ["??", "jeonnam"],
-    "??": ["??", "gyeongbuk"],
-    "??": ["??", "gyeongnam"],
-    "??": ["??", "jeju"],
+    "서울": ["서울", "seoul"],
+    "경기": ["경기", "경기도", "gyeonggi"],
+    "인천": ["인천", "incheon"],
+    "부산": ["부산", "busan"],
+    "대구": ["대구", "daegu"],
+    "대전": ["대전", "daejeon"],
+    "광주": ["광주", "gwangju"],
+    "울산": ["울산", "ulsan"],
+    "세종": ["세종", "sejong"],
+    "강원": ["강원", "강원도", "gangwon"],
+    "충북": ["충북", "충청북도", "chungbuk"],
+    "충남": ["충남", "충청남도", "chungnam"],
+    "전북": ["전북", "전라북도", "jeonbuk"],
+    "전남": ["전남", "전라남도", "jeonnam"],
+    "경북": ["경북", "경상북도", "gyeongbuk"],
+    "경남": ["경남", "경상남도", "gyeongnam"],
+    "제주": ["제주", "제주도", "jeju"],
 }
 
 REQUEST_PRICE_TERMS = {
-    "free": ["??", "free"],
-    "low": ["??", "?", "3??", "30000", "low"],
-    "mid": ["10??", "100000", "???", "??", "mid"],
-    "high": ["????", "??", "vip", "high"],
+    "free": ["무료", "공짜", "free"],
+    "low": ["저렴", "싼", "3만원", "30000", "low"],
+    "mid": ["10만원", "100000", "적당한", "보통", "mid"],
+    "high": ["프리미엄", "비싼", "vip", "high"],
 }
 
 REQUEST_FEATURE_TERMS = {
-    "child": ["??", "???", "??", "family", "kid", "children"],
-    "festival": ["??", "????", "festival"],
-    "openrun": ["???", "openrun", "open run"],
+    "child": ["아이", "아동", "가족", "family", "kid", "children"],
+    "festival": ["축제", "페스티벌", "festival"],
+    "openrun": ["오픈런", "openrun", "open run"],
 }
 
 
@@ -230,7 +230,7 @@ def _normalize_scores(scores) -> dict[str, float]:
 
 def get_or_build_performance_vector(performance: Performance) -> PerformanceVector:
     vector, _ = PerformanceVector.objects.get_or_create(performance=performance)
-    if vector.vector_data and vector.version == PERFORMANCE_VECTOR_VERSION:
+    if _performance_vector_is_current(vector, performance):
         return vector
 
     vector.vector_data = build_performance_vector_data(performance)
@@ -238,6 +238,27 @@ def get_or_build_performance_vector(performance: Performance) -> PerformanceVect
     vector.version = PERFORMANCE_VECTOR_VERSION
     vector.save(update_fields=["vector_data", "source_summary", "version", "updated_at"])
     return vector
+
+
+def _performance_vector_is_current(vector: PerformanceVector, performance: Performance) -> bool:
+    if not vector.vector_data or vector.version != PERFORMANCE_VECTOR_VERSION:
+        return False
+    synced_at = getattr(performance, "synced_at", None)
+    if synced_at and vector.updated_at and synced_at > vector.updated_at:
+        return False
+    return True
+
+
+def mark_user_recommendation_profile_stale(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        return
+    UserPreferenceProfile.objects.filter(user=user).update(is_stale=True)
+
+
+def invalidate_performance_vector(performance):
+    if not performance:
+        return
+    PerformanceVector.objects.filter(performance=performance).delete()
 
 
 def build_performance_vector_data(performance: Performance) -> dict[str, float]:

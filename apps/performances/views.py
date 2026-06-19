@@ -12,6 +12,7 @@ from apps.logs.services import (
     safe_record_search_log,
     safe_record_view_log,
 )
+from apps.recommendations.services import mark_user_recommendation_profile_stale
 
 from .models import Performance, UsersPerformanceAction
 from .serializers import (
@@ -336,6 +337,7 @@ class PerformanceActionView(APIView):
             performance_id=performance.performance_id,
             log_type=f"{action_type}_{'on' if is_active else 'off'}",
         )
+        mark_user_recommendation_profile_stale(request.user)
 
         return Response({
             "performance_id": performance.performance_id,

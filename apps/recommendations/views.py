@@ -1,6 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -46,7 +46,7 @@ class RecommendationCandidateView(APIView):
 
 
 class AIRecommendationView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = AIRecommendationRequestSerializer(data=request.data)
@@ -86,34 +86,29 @@ class AIRecommendationView(APIView):
             "results": result_serializer.data,
         }
         if serializer.validated_data["include_candidates"]:
-            profile_snapshot, candidates = get_recommendation_candidates(
-                user=request_user_or_none(request),
-                message=serializer.validated_data["message"],
-                limit=serializer.validated_data["candidate_limit"],
-            )
-            candidate_serializer = RecommendationCandidateSerializer(
-                [serialize_candidate(candidate) for candidate in candidates],
-                many=True,
-                context={"request": request},
-            )
-            response_data["profile"] = profile_snapshot
-            response_data["candidates"] = candidate_serializer.data
+            response_data["profile"] = session.user_profile_snapshot
+            response_data["candidates"] = session.candidate_snapshot
         return Response(response_data, status=status.HTTP_200_OK)
 
 
 class RecommendationFeedbackView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, session_id):
-        session = get_object_or_404(RecommendationSession, pk=session_id)
+        session = get_object_or_404(RecommendationSession, pk=session_id, user=request.user)
         serializer = RecommendationFeedbackSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         performance_id = serializer.validated_data.pop("performance_id", "")
         performance = Performance.objects.filter(pk=performance_id).first() if performance_id else None
+        if performance and not session.items.filter(performance=performance).exists():
+            return Response(
+                {"performance_id": "This performance was not recommended in the session."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         feedback = record_feedback_and_update_quality(
             session=session,
-            user=request_user_or_none(request),
+            user=request.user,
             performance=performance,
             feedback_type=serializer.validated_data["feedback_type"],
             metadata=serializer.validated_data.get("metadata", {}),

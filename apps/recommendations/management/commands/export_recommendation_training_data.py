@@ -34,6 +34,12 @@ class Command(BaseCommand):
             default=False,
             help="Mark exported candidates as exported.",
         )
+        parser.add_argument(
+            "--include-exported",
+            action="store_true",
+            default=False,
+            help="Include candidates that were already exported.",
+        )
 
     def handle(self, *args, **options):
         output_path = Path(options["output"])
@@ -48,6 +54,10 @@ class Command(BaseCommand):
                     TrainingExampleCandidate.Status.NEEDS_REVIEW,
                 ]
             )
+        if not options["include_exported"]:
+            queryset = queryset.exclude(
+                status=TrainingExampleCandidate.Status.EXPORTED,
+            ).filter(exported_at__isnull=True)
 
         queryset = queryset.order_by("id")
         if not queryset.exists():
