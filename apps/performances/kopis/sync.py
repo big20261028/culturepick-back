@@ -17,6 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import BookingLink, Performance, PerformanceImage, Venue
+from ..utils.address import is_blank_region_value, resolve_sido_gugun
 from .codes import genre_code_from_name, status_code_from_name
 from .client import KopisClient, RawPerformanceDetail, RawVenueDetail
 from .parser import to_date
@@ -107,12 +108,29 @@ def sync_venue(raw: RawVenueDetail) -> tuple[Venue, bool]:
     단일 공연시설을 DB에 upsert.
     반환값: (Venue 인스턴스, 신규생성 여부)
     """
+    existing = Venue.objects.filter(venue_id=raw.mt10id).only("sido", "gugun").first()
+    parsed_sido, parsed_gugun = resolve_sido_gugun(
+        raw_sido=raw.sidonm,
+        raw_gugun=raw.gugunnm,
+        address=raw.adres,
+    )
+    sido = (
+        parsed_sido
+        if existing is None or is_blank_region_value(existing.sido)
+        else existing.sido
+    )
+    gugun = (
+        parsed_gugun
+        if existing is None or is_blank_region_value(existing.gugun)
+        else existing.gugun
+    )
+
     venue, created = Venue.objects.update_or_create(
         venue_id=raw.mt10id,
         defaults={
             "name": raw.fcltynm,
-            "sido": raw.sidonm,
-            "gugun": raw.gugunnm,
+            "sido": sido,
+            "gugun": gugun,
             "address": raw.adres,
             "facility_characteristic": raw.fcltychartr,
             "homepage_url": raw.relateurl,

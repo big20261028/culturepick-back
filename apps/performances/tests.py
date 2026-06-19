@@ -14,8 +14,39 @@ from apps.performances.models import (
     UsersPerformanceAction,
     Venue,
 )
+from apps.performances.utils.address import parse_sido_gugun
 
 User = get_user_model()
+
+
+class VenueAddressParsingTests(TestCase):
+    def test_parse_sido_gugun_supports_major_city_addresses(self):
+        cases = [
+            ("대전광역시 서구 둔산대로 135", ("대전광역시", "서구")),
+            ("서울특별시 종로구 세종대로 175", ("서울특별시", "종로구")),
+            ("부산광역시 해운대구 수영강변대로 120", ("부산광역시", "해운대구")),
+            ("제주특별자치도 제주시 서광로 2길 24", ("제주특별자치도", "제주시")),
+        ]
+
+        for address, expected in cases:
+            with self.subTest(address=address):
+                self.assertEqual(parse_sido_gugun(address), expected)
+
+    def test_parse_sido_gugun_keeps_first_city_for_nested_districts(self):
+        self.assertEqual(
+            parse_sido_gugun("경기도 성남시 분당구 성남대로 808"),
+            ("경기도", "성남시"),
+        )
+        self.assertEqual(
+            parse_sido_gugun("충청남도 천안시 동남구 성남면 1"),
+            ("충청남도", "천안시"),
+        )
+
+    def test_parse_sido_gugun_handles_sejong_without_gugun(self):
+        self.assertEqual(
+            parse_sido_gugun("세종특별자치시 갈매로 387"),
+            ("세종특별자치시", ""),
+        )
 
 
 class KopisPerformanceDetailTests(TestCase):
@@ -138,6 +169,50 @@ class KopisPerformanceDetailTests(TestCase):
         self.assertEqual(venue.facility_characteristic, "문예회관")
         self.assertEqual(venue.homepage_url, "https://venue.example.com")
         self.assertTrue(venue.has_parking_lot)
+
+    def test_sync_venue_fills_region_from_address_when_kopis_region_is_empty(self):
+        raw = RawVenueDetail(
+            mt10id="FC000101",
+            fcltynm="Daejeon Arts Center",
+            sidonm="",
+            gugunnm="",
+            adres="대전광역시 서구 둔산대로 135",
+            la="36.3504119",
+            lo="127.3845475",
+            seatscale="1000",
+        )
+
+        sync_venue(raw)
+
+        venue = Venue.objects.get(venue_id="FC000101")
+        self.assertEqual(venue.sido, "대전광역시")
+        self.assertEqual(venue.gugun, "서구")
+
+    def test_sync_venue_preserves_existing_region_values(self):
+        Venue.objects.create(
+            venue_id="FC000102",
+            name="Existing Venue",
+            sido="서울특별시",
+            gugun="종로구",
+            address="서울특별시 종로구",
+        )
+        raw = RawVenueDetail(
+            mt10id="FC000102",
+            fcltynm="Existing Venue Renamed",
+            sidonm="부산광역시",
+            gugunnm="해운대구",
+            adres="부산광역시 해운대구 수영강변대로 120",
+            la="35.0",
+            lo="129.0",
+            seatscale="800",
+        )
+
+        sync_venue(raw)
+
+        venue = Venue.objects.get(venue_id="FC000102")
+        self.assertEqual(venue.name, "Existing Venue Renamed")
+        self.assertEqual(venue.sido, "서울특별시")
+        self.assertEqual(venue.gugun, "종로구")
 
 
 class PerformanceDetailAPITests(APITestCase):

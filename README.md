@@ -1,139 +1,783 @@
-# CulturePick BE
+# CulturePick Backend
 
-공연 예술 통합 정보 서비스 **컬쳐픽** 백엔드 레포지토리입니다.
+공연예술통합전산망(KOPIS) 데이터를 기반으로 공연 검색, 공연 상세, 관심/볼예정, 사용자 로그, OpenAI 추천 기능을 제공하는 Django REST API 서버입니다.
 
-공연예술통합전산망(KOPIS) API를 기반으로 공연 데이터를 수집·제공하며, JWT 인증 및 소셜 로그인, 공연 검색, 관심/볼예정, 사용자 활동 로그 기능을 지원합니다.
+이 문서는 프론트엔드에서 API를 연동할 때 필요한 정보를 우선으로 정리합니다.
 
 ---
 
-## 기술 스택
+## 현재 배포 상태
 
-| 분류 | 기술 |
+| 항목 | 값 |
 |---|---|
-| Framework | Django 5.1 |
-| Database | PostgreSQL 16 |
-| Async | Celery + Redis |
-| Infra | Docker |
-| Auth | JWT (SimpleJWT), OAuth2 |
-| Data | KOPIS OpenAPI |
+| 운영 서버 | Elastic Beanstalk |
+| 운영 DB | AWS RDS PostgreSQL |
+| 운영 Base URL | `http://culturepick.ap-northeast-2.elasticbeanstalk.com` |
+| API Prefix | `/api/v1` |
+| Health Check | `GET /health/` |
+| 인증 방식 | JWT Bearer Token |
 
----
+Health check:
 
-## 주요 기능
+```http
+GET http://culturepick.ap-northeast-2.elasticbeanstalk.com/health/
+```
 
-- JWT 기반 회원가입·로그인·로그아웃
-- 소셜 로그인 (구글·네이버)
-- 공연 목록 및 통합 검색
-- 장르·지역·상태 기반 공연 검색
-- 공연 상세 정보 및 예매 링크 제공
-- 관심 공연 및 볼예정 공연 저장
-- 검색·조회·행동·QnA 로그 저장
-- KOPIS 데이터 수집 및 로컬 샘플 데이터 적재
+정상 응답:
 
----
+```json
+{"status": "ok"}
+```
 
-## 프로젝트 구조
+프론트에서는 환경변수 예시를 아래처럼 둘 수 있습니다.
 
-```text
-culturepick-back/
-├── BE/                     # Django 프로젝트 설정
-│   └── settings/
-│       ├── base.py
-│       ├── local.py
-│       └── production.py
-├── apps/
-│   ├── users/              # 유저 & 인증
-│   ├── performances/       # 공연 데이터 + KOPIS 연동
-│   └── logs/               # 검색·조회·행동·QnA 로그
-├── common/                 # 공통 유틸리티
-├── fixtures/               # 프론트 연동 검증용 샘플 데이터
-├── docker/
-├── requirements/
-│   ├── base.txt
-│   ├── local.txt
-│   └── production.txt
-└── docker-compose.yml
+```env
+VITE_API_BASE_URL=http://culturepick.ap-northeast-2.elasticbeanstalk.com
 ```
 
 ---
 
-## 로컬 개발 환경 세팅
+## 인증 공통 규칙
 
-### 사전 요구사항
+로그인 후 받은 access token을 인증이 필요한 API에 전달합니다.
 
-- Python 3.11
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+인증이 필요한 주요 API:
+
+- 로그아웃
+- 관심/볼예정 토글
+- OpenAI 추천 요청
+- 추천 피드백 저장
+
+공연 목록/상세/검색은 비로그인도 호출 가능합니다. 단, 로그인 상태에서 호출하면 응답의 `is_interested`, `is_watchlisted`가 현재 사용자 기준으로 내려옵니다.
+
+---
+
+## 빠른 연동 순서
+
+1. `GET /health/`로 서버 상태 확인
+2. `POST /api/v1/auth/register/` 회원가입
+3. `POST /api/v1/auth/login/` 로그인 후 토큰 저장
+4. `GET /api/v1/performances/` 공연 목록 확인
+5. `GET /api/v1/performances/?keyword=...` 통합검색 확인
+6. `GET /api/v1/performances/{performance_id}/` 상세 확인
+7. `POST /api/v1/performances/{performance_id}/actions/` 관심/볼예정 토글 확인
+8. `POST /api/v1/recommendations/ai/` OpenAI 추천 확인
+9. `POST /api/v1/recommendations/{session_id}/feedback/` 추천 피드백 저장 확인
+
+---
+
+## Auth API
+
+### 회원가입
+
+```http
+POST /api/v1/auth/register/
+```
+
+Request:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "ValidPass123!",
+  "password_confirm": "ValidPass123!",
+  "nickname": "문화러"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "message": "회원가입이 완료되었습니다."
+}
+```
+
+### 로그인
+
+```http
+POST /api/v1/auth/login/
+```
+
+Request:
+
+```json
+{
+  "email": "user@example.com",
+  "password": "ValidPass123!"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "access": "<jwt_access_token>",
+  "refresh": "<jwt_refresh_token>"
+}
+```
+
+### 토큰 갱신
+
+```http
+POST /api/v1/auth/token/refresh/
+```
+
+Request:
+
+```json
+{
+  "refresh": "<jwt_refresh_token>"
+}
+```
+
+Response:
+
+```json
+{
+  "access": "<new_access_token>",
+  "refresh": "<new_refresh_token>"
+}
+```
+
+### 로그아웃
+
+```http
+POST /api/v1/auth/logout/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "refresh": "<jwt_refresh_token>"
+}
+```
+
+### 소셜 로그인
+
+```http
+POST /api/v1/auth/social/
+```
+
+Request:
+
+```json
+{
+  "provider": "google",
+  "code": "<authorization_code>",
+  "redirect_uri": "http://localhost:5173/auth/callback/google"
+}
+```
+
+`provider`는 `google`, `naver`, `kakao`를 받을 수 있습니다. 네이버는 필요 시 `state`도 함께 전달합니다.
+
+```json
+{
+  "provider": "naver",
+  "code": "<authorization_code>",
+  "state": "<state>",
+  "redirect_uri": "http://localhost:5173/auth/callback/naver"
+}
+```
+
+---
+
+## Performances API
+
+### 공연 목록/통합검색/상세검색
+
+```http
+GET /api/v1/performances/
+```
+
+Query parameters:
+
+| 이름 | 설명 | 예시 |
+|---|---|---|
+| `keyword` | 공연명, 출연진, 공연장 통합검색 | `레미제라블` |
+| `genre` | 장르 필터 | `musical`, `GGGA` |
+| `local` | 지역 필터 | `seoul`, `busan`, `세종특별자치시` |
+| `region` | `local`과 동일한 지역 필터 alias | `seoul` |
+| `status` | 공연 상태 | `upcoming`, `performing`, `done` |
+| `pageNum` | 페이지 번호 | `1` |
+| `page` | `pageNum` alias | `1` |
+| `pageSize` | 페이지 크기 | `20` |
+| `page_size` | `pageSize` alias | `20` |
+| `sorted` | 정렬 | `latest`, `popular`, `views`, `zzim`, `title`, `date` |
+| `sort` | `sorted` alias | `latest` |
+
+예시:
+
+```http
+GET /api/v1/performances/?keyword=뮤지컬&genre=musical&local=seoul&pageNum=1&pageSize=20&sorted=latest
+```
+
+Response:
+
+```json
+{
+  "pageNum": 1,
+  "pageSize": 20,
+  "total": 1,
+  "searchData": [
+    {
+      "performance_id": "PF000001",
+      "title": "공연 제목",
+      "genre": "뮤지컬",
+      "genre_code": "GGGA",
+      "start_date": "2026-06-01",
+      "end_date": "2026-06-30",
+      "status": "공연중",
+      "status_code": "02",
+      "poster_url": "https://...",
+      "runtime": "150분",
+      "age_rating": "8세 이상",
+      "min_price": 50000,
+      "max_price": 150000,
+      "is_free": false,
+      "openrun": false,
+      "is_child": false,
+      "is_festival": false,
+      "venue": {
+        "venue_id": "FC000001",
+        "name": "공연장명",
+        "sido": "서울특별시",
+        "gugun": "종로구",
+        "address": "서울특별시 종로구 ...",
+        "latitude": "37.1234567",
+        "longitude": "127.1234567"
+      },
+      "view_count": 0,
+      "zzim_count": 0,
+      "is_interested": false,
+      "is_watchlisted": false,
+      "search_score": 0
+    }
+  ],
+  "page": 1,
+  "page_size": 20,
+  "results": [
+    {
+      "performance_id": "PF000001",
+      "title": "공연 제목",
+      "genre": "뮤지컬",
+      "genre_code": "GGGA",
+      "start_date": "2026-06-01",
+      "end_date": "2026-06-30",
+      "status": "공연중",
+      "status_code": "02",
+      "poster_url": "https://...",
+      "runtime": "150분",
+      "age_rating": "8세 이상",
+      "min_price": 50000,
+      "max_price": 150000,
+      "is_free": false,
+      "openrun": false,
+      "is_child": false,
+      "is_festival": false,
+      "venue": {
+        "venue_id": "FC000001",
+        "name": "공연장명",
+        "sido": "서울특별시",
+        "gugun": "종로구",
+        "address": "서울특별시 종로구 ...",
+        "latitude": "37.1234567",
+        "longitude": "127.1234567"
+      },
+      "view_count": 0,
+      "zzim_count": 0,
+      "is_interested": false,
+      "is_watchlisted": false,
+      "search_score": 0
+    }
+  ]
+}
+```
+
+`searchData`와 `results`는 프론트 호환을 위해 함께 내려갑니다. 신규 연동에서는 `searchData` 기준 사용을 권장합니다.
+
+### 지역 필터 참고
+
+프론트 alias:
+
+| alias | 포함 지역 |
+|---|---|
+| `seoul` | 서울 |
+| `gyeonggi` | 경기, 인천 |
+| `chungcheong` | 충청, 강원, 대전, 세종 |
+| `daegu` | 대구, 경북 |
+| `busan` | 부산, 경남, 울산 |
+| `gwangju` | 광주, 전라 |
+| `jeju` | 제주, 기타, 미분류, 해외 |
+
+현재 데이터 정책:
+
+- 국내 일반 주소: `sido`, `gugun` 모두 저장
+- 세종특별자치시: `sido="세종특별자치시"`, `gugun=""`
+- 해외 공연장: `sido=""`, `gugun=""` 허용
+- `경기도 성남시 분당구 ...` 같은 주소는 `sido="경기도"`, `gugun="성남시"`로 저장
+
+### 공연 상세
+
+```http
+GET /api/v1/performances/{performance_id}/
+```
+
+상세 응답에는 목록 필드에 더해 `synopsis`, `schedule_info`, `images`, `booking_links`, 제작/기획 정보 등이 포함됩니다.
+
+응답 일부:
+
+```json
+{
+  "performance_id": "PF000001",
+  "title": "공연 제목",
+  "synopsis": "공연 소개",
+  "schedule_info": "화~금 20:00",
+  "venue": {
+    "venue_id": "FC000001",
+    "name": "공연장명",
+    "sido": "서울특별시",
+    "gugun": "종로구",
+    "address": "서울특별시 종로구 ..."
+  },
+  "images": [
+    {
+      "image_url": "https://...",
+      "sort_order": 0
+    }
+  ],
+  "booking_links": [
+    {
+      "site_name": "예매처",
+      "url": "https://..."
+    }
+  ],
+  "is_interested": false,
+  "is_watchlisted": false
+}
+```
+
+### 관심/볼예정 토글
+
+```http
+POST /api/v1/performances/{performance_id}/actions/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "action_type": "interest"
+}
+```
+
+또는 명시적으로 켜고 끄기:
+
+```json
+{
+  "action_type": "watchlist",
+  "is_active": true
+}
+```
+
+`action_type`:
+
+- `interest`: 관심 등록
+- `watchlist`: 볼예정 등록
+
+Response:
+
+```json
+{
+  "performance_id": "PF000001",
+  "action_type": "interest",
+  "is_active": true,
+  "is_interested": true,
+  "is_watchlisted": false,
+  "zzim_count": 12
+}
+```
+
+---
+
+## Recommendations API
+
+추천 API는 두 단계로 나뉩니다.
+
+- 후보 조회: OpenAI 호출 없이 백엔드 추천 후보만 조회
+- AI 추천: 후보를 OpenAI에 전달해 친근한 추천 이유와 순위를 생성
+
+### 추천 후보 조회
+
+```http
+POST /api/v1/recommendations/candidates/
+```
+
+비로그인도 호출 가능하지만, 로그인 상태에서 호출하면 사용자 로그/관심/볼예정 정보가 반영됩니다.
+
+Request:
+
+```json
+{
+  "message": "이번 주말에 볼만한 뮤지컬 추천해줘",
+  "limit": 20
+}
+```
+
+Response:
+
+```json
+{
+  "message": "이번 주말에 볼만한 뮤지컬 추천해줘",
+  "profile": {
+    "vector": {},
+    "source_summary": {}
+  },
+  "total": 20,
+  "candidates": [
+    {
+      "performance": {
+        "performance_id": "PF000001",
+        "title": "공연 제목",
+        "genre": "뮤지컬",
+        "venue": {
+          "sido": "서울특별시",
+          "gugun": "종로구"
+        }
+      },
+      "score": 8.3,
+      "reasons": ["선호 장르와 유사한 공연입니다."],
+      "contributions": []
+    }
+  ]
+}
+```
+
+### OpenAI 추천
+
+```http
+POST /api/v1/recommendations/ai/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "message": "이번 주말에 친구랑 볼만한 뮤지컬 추천해줘",
+  "limit": 5,
+  "candidate_limit": 30,
+  "include_candidates": false
+}
+```
+
+필드:
+
+| 이름 | 설명 | 기본값 |
+|---|---|---|
+| `message` | 사용자 요청 문장 | `""` |
+| `prompt` | `message` alias | `""` |
+| `limit` | 최종 추천 개수, 1~10 | `5` |
+| `candidate_limit` | OpenAI에 전달할 후보 수, 5~50 | `30` |
+| `include_candidates` | 디버그용 후보/프로필 포함 여부 | `false` |
+
+Response:
+
+```json
+{
+  "session_id": 12,
+  "summary": "친구와 보기 좋은 분위기의 뮤지컬 위주로 골라봤어요.",
+  "message": "친구와 보기 좋은 분위기의 뮤지컬 위주로 골라봤어요.",
+  "fallback_used": false,
+  "validation_status": "passed",
+  "recommendations": [
+    {
+      "performance_id": "PF000001",
+      "title": "공연 제목",
+      "reason": "최근 관심을 보인 뮤지컬 장르와 잘 맞고, 접근성도 좋은 공연이에요.",
+      "rank": 1,
+      "source": "openai",
+      "score": 9.1
+    }
+  ],
+  "results": [
+    {
+      "id": 1,
+      "rank": 1,
+      "score": 9.1,
+      "reason": "최근 관심을 보인 뮤지컬 장르와 잘 맞고, 접근성도 좋은 공연이에요.",
+      "source": "openai",
+      "performance": {
+        "performance_id": "PF000001",
+        "title": "공연 제목",
+        "venue": {
+          "sido": "서울특별시",
+          "gugun": "종로구"
+        }
+      }
+    }
+  ]
+}
+```
+
+`recommendations`는 프론트 표시용으로 가볍게 가공된 배열이고, `results`는 공연 카드 렌더링에 필요한 상세 정보가 포함된 배열입니다.
+
+### 추천 피드백 저장
+
+```http
+POST /api/v1/recommendations/{session_id}/feedback/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "performance_id": "PF000001",
+  "feedback_type": "interest",
+  "metadata": {
+    "source": "recommendation_card"
+  }
+}
+```
+
+`feedback_type`:
+
+| 값 | 의미 | 학습 신호 |
+|---|---|---|
+| `click` | 상세 클릭 | 약한 긍정 |
+| `interest` | 관심 등록 | 중간 긍정 |
+| `watchlist` | 볼예정 등록 | 강한 긍정 |
+| `booking_link` | 예매 링크 클릭 | 최상위 긍정 |
+| `thumbs_up` | 좋아요 | 긍정 |
+| `thumbs_down` | 싫어요 | 강한 부정 |
+| `regenerate` | 재추천 요청 | 중간 부정 |
+| `reason_not_helpful` | 추천 이유가 도움 안 됨 | 강한 부정 |
+| `not_my_taste` | 취향 아님 | 부정 |
+| `already_seen` | 이미 본 공연 | 약한 부정/제외 신호 |
+
+주의:
+
+- `session_id`는 해당 사용자의 추천 세션이어야 합니다.
+- `performance_id`를 전달하는 경우 해당 추천 세션에 포함된 공연이어야 합니다.
+- 피드백은 추후 파인튜닝/품질 평가 후보 데이터 생성에 사용됩니다.
+
+---
+
+## Logs API
+
+공연 목록/상세/액션 일부는 백엔드에서 자동 로그를 남깁니다. 프론트에서 별도 이벤트를 남기고 싶을 때 아래 API를 사용할 수 있습니다.
+
+### 검색 로그
+
+```http
+POST /api/v1/logs/search/
+```
+
+```json
+{
+  "keyword": "뮤지컬",
+  "filter_region": "seoul",
+  "filter_genre": "musical",
+  "filter_status": "performing"
+}
+```
+
+### 조회/행동 로그
+
+```http
+POST /api/v1/logs/view/
+```
+
+```json
+{
+  "performance_id": "PF000001",
+  "log_type": "detail"
+}
+```
+
+### QnA/AI 로그
+
+```http
+POST /api/v1/logs/qna/
+```
+
+```json
+{
+  "question": "이번 주말 볼만한 공연 추천해줘",
+  "answer": "친구와 보기 좋은 뮤지컬을 추천드릴게요."
+}
+```
+
+로그 API는 비로그인도 호출 가능하지만, 로그인 상태에서 `Authorization` 헤더를 전달하면 사용자와 연결됩니다.
+
+---
+
+## 프론트 연동 체크리스트
+
+### 필수
+
+- 운영 Base URL이 `http://culturepick.ap-northeast-2.elasticbeanstalk.com`인지 확인
+- 로그인 후 access token을 `Authorization: Bearer ...`로 전달
+- access token 만료 시 `POST /api/v1/auth/token/refresh/` 호출
+- 공연 목록은 `searchData` 기준으로 렌더링
+- 공연 상세 진입 시 `performance_id` 사용
+- 관심/볼예정 버튼은 `is_interested`, `is_watchlisted` 응답값으로 상태 갱신
+- 추천 API는 로그인 필요
+- 추천 피드백 저장 시 `session_id` 보관 필요
+
+### CORS/CSRF
+
+프론트 배포 도메인이 정해지면 백엔드 Elastic Beanstalk 환경변수에 추가해야 합니다.
+
+```env
+CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com
+CSRF_TRUSTED_ORIGINS=https://your-frontend-domain.com
+```
+
+로컬 프론트에서 운영 백엔드를 직접 호출해야 한다면 임시로 아래 origin도 추가할 수 있습니다.
+
+```env
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+CSRF_TRUSTED_ORIGINS=http://localhost:5173
+```
+
+여러 값은 쉼표로 구분합니다.
+
+```env
+CORS_ALLOWED_ORIGINS=https://culturepick.com,http://localhost:5173
+```
+
+---
+
+## KOPIS 데이터 적재
+
+AWS 1차 배포에서는 Redis/Celery 자동 수집을 제외했습니다. 공연 데이터는 수동 management command로 적재합니다.
+
+### 수동 적재
+
+```bash
+python manage.py sync_kopis --stdate 20260601 --eddate 20260630 --genre GGGA --with-venues
+```
+
+장르 코드:
+
+| 코드 | 장르 |
+|---|---|
+| `AAAA` | 연극 |
+| `GGGA` | 뮤지컬 |
+| `CCCA` | 클래식 |
+| `CCCC` | 국악 |
+| `CCCD` | 대중음악 |
+| `BBBC` | 무용 |
+
+`sync_kopis`는 venue 생성/갱신 시 주소를 기반으로 `sido`, `gugun`을 자동 저장합니다.
+
+### 기존 venue 지역 보정
+
+기존 데이터의 `sido/gugun`을 보정할 때 사용합니다.
+
+```bash
+python manage.py fill_venue_region
+```
+
+기본은 빈 값/이상값만 채웁니다. 모든 venue를 주소 기준으로 다시 계산하려면 명시적으로 `--overwrite`를 붙입니다.
+
+```bash
+python manage.py fill_venue_region --overwrite
+```
+
+---
+
+## AWS 운영 명령 참고
+
+Elastic Beanstalk EC2에 접속한 뒤 실행 중인 컨테이너를 확인합니다.
+
+```bash
+sudo docker ps
+```
+
+컨테이너 안에서 Django 명령을 실행합니다.
+
+```bash
+sudo docker exec -it <container_id> python manage.py sync_kopis --stdate 20260601 --eddate 20260630 --genre GGGA --with-venues
+```
+
+데이터 개수 확인:
+
+```bash
+sudo docker exec -it <container_id> python manage.py shell -c "from apps.performances.models import Performance, Venue; print('performances=', Performance.objects.count(), 'venues=', Venue.objects.count())"
+```
+
+---
+
+## 로컬 개발
+
+### 요구사항
+
+- Python 3.12 권장
 - Docker Desktop
-- Git Bash 또는 PowerShell
+- PostgreSQL/Redis는 `docker-compose.local.yml` 사용
 
-### 1. 레포지토리 클론
+### 설치
 
 ```bash
 git clone https://github.com/big20261028/culturepick-back.git
 cd culturepick-back
+python -m venv .venv
 ```
-
-### 2. 가상환경 생성 및 패키지 설치
 
 Git Bash:
 
 ```bash
-python -m venv .venv
 source .venv/Scripts/activate
-pip install -r requirements/local.txt
 ```
 
 PowerShell:
 
 ```powershell
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+패키지 설치:
+
+```bash
 pip install -r requirements/local.txt
 ```
 
-### 3. 환경변수 설정
+환경변수 파일:
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` 파일에 필요한 값을 설정합니다.
-
-```env
-DJANGO_SECRET_KEY=your-secret-key
-DJANGO_DEBUG=True
-DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-DJANGO_SETTINGS_MODULE=BE.settings.local
-
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/culturepick
-REDIS_URL=redis://localhost:6379/0
-
-KOPIS_API_KEY=your-kopis-api-key
-
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-NAVER_CLIENT_ID=your-naver-client-id
-NAVER_CLIENT_SECRET=your-naver-client-secret
-```
-
-### 4. Docker로 DB 실행
+로컬 DB/Redis 실행:
 
 ```bash
 docker compose -f docker-compose.local.yml up -d db redis
 ```
 
-### 5. 마이그레이션
+마이그레이션:
 
 ```bash
 python manage.py migrate
 ```
 
-### 6. 서버 실행
+서버 실행:
 
 ```bash
 python manage.py runserver
 ```
 
-로컬 서버 주소:
+로컬 서버:
 
 ```text
 http://127.0.0.1:8000
@@ -141,181 +785,22 @@ http://127.0.0.1:8000
 
 ---
 
-## 로컬 데이터 적재
+## AWS 배포
 
-프론트 연동 검증용 샘플 fixture가 준비되어 있습니다.
+현재 배포용 루트 `docker-compose.yml`은 web 컨테이너 하나만 실행합니다.
 
-샘플은 공연 목록, 통합 검색, 장르/지역/상태 필터, 상세 페이지, 관심/볼예정 토글 검증이 가능하도록 구성되어 있습니다.
+- Django settings: `BE.settings.production`
+- 실행 서버: `gunicorn`
+- DB: RDS PostgreSQL
+- Redis/Celery: 1차 배포에서는 제외
 
-### 샘플 구성
+배포 zip 생성 예시:
 
-| 파일 | 설명 | 개수 |
-|---|---|---:|
-| `fixtures/venues_sample.json` | 공연장 | 8 |
-| `fixtures/performances_sample.json` | 공연 | 12 |
-| `fixtures/performance_images_sample.json` | 공연 상세 이미지 | 12 |
-| `fixtures/booking_links_sample.json` | 예매 링크 | 12 |
-
-### 적재 순서
-
-```bash
-python manage.py loaddata fixtures/venues_sample.json
-python manage.py loaddata fixtures/performances_sample.json
-python manage.py loaddata fixtures/performance_images_sample.json
-python manage.py loaddata fixtures/booking_links_sample.json
+```powershell
+tar -a -cf culturepick-backend-eb.zip --exclude='__pycache__' --exclude='*.pyc' Dockerfile docker-compose.yml manage.py requirements BE apps common docker .ebignore
 ```
 
-### 샘플 검색어
-
-```text
-햄릿
-레미제라블
-헬로카봇
-재즈
-제주
-```
-
-### 샘플 공연 ID
-
-```text
-PF900001  햄릿
-PF900002  레미제라블
-PF900003  헬로카봇 스페셜: 전설의 용사를 찾아서
-PF900010  제주 인디 콘서트
-```
-
-샘플 데이터는 프론트 연동 확인용 고정 데이터입니다. 기존 KOPIS 데이터가 많이 적재된 DB에 섞기보다는, 비어 있는 개발 DB에서 사용하는 것을 권장합니다.
-
----
-
-## KOPIS 데이터 수집
-
-### 전체 수집
-
-```bash
-python manage.py sync_kopis --with-venues --stdate 20260101 --eddate 20261231
-```
-
-### 특정 기간·장르만 수집
-
-```bash
-python manage.py sync_kopis --with-venues --genre GGGA --stdate 20260101 --eddate 20261231
-```
-
-| 장르코드 | 장르명 |
-|---|---|
-| AAAA | 연극 |
-| GGGA | 뮤지컬 |
-| CCCA | 서양음악(클래식) |
-| CCCC | 한국음악(국악) |
-| CCCD | 대중음악 |
-| BBBC | 무용 |
-
----
-
-## API 엔드포인트
-
-API prefix:
-
-```text
-/api/v1
-```
-
-### 인증
-
-| Method | URL | 설명 |
-|---|---|---|
-| POST | `/api/v1/auth/register/` | 회원가입 |
-| POST | `/api/v1/auth/login/` | 로그인 |
-| POST | `/api/v1/auth/logout/` | 로그아웃 |
-| POST | `/api/v1/auth/token/refresh/` | 액세스 토큰 갱신 |
-| POST | `/api/v1/auth/social/` | 소셜 로그인 |
-
-### 공연
-
-| Method | URL | 설명 |
-|---|---|---|
-| GET | `/api/v1/performances/` | 공연 목록/검색 |
-| GET | `/api/v1/performances/{performance_id}/` | 공연 상세 |
-| POST | `/api/v1/performances/{performance_id}/actions/` | 관심/볼예정 토글 |
-
-### 로그
-
-| Method | URL | 설명 |
-|---|---|---|
-| POST | `/api/v1/logs/search/` | 검색 로그 저장 |
-| POST | `/api/v1/logs/view/` | 조회/행동 로그 저장 |
-| POST | `/api/v1/logs/qna/` | QnA/AI 추천 로그 저장 |
-
----
-
-## 주요 Query Parameter
-
-공연 목록/검색 API에서 사용하는 주요 파라미터입니다.
-
-| 이름 | 설명 | 예시 |
-|---|---|---|
-| `keyword` | 통합 검색어 | `햄릿` |
-| `genre` | 장르 필터 | `musical` |
-| `local` | 지역 필터 | `seoul` |
-| `status` | 공연 상태 | `performing` |
-| `pageNum` | 페이지 번호 | `1` |
-| `pageSize` | 페이지 크기 | `10` |
-| `sorted` | 정렬 | `latest` |
-
-통합 검색은 공연명, 출연진, 공연장을 기준으로 우선순위를 계산합니다.
-
-```text
-공연명 일치: +100
-출연진 일치: +60
-공연장 일치: +40
-```
-
----
-
-## 소셜 로그인 참고
-
-현재 프론트 연동 검증이 완료된 provider는 아래와 같습니다.
-
-```text
-google
-naver
-```
-
-프론트 callback URI는 아래 형태로 통일합니다.
-
-```text
-http://localhost:5173/auth/callback/google
-http://localhost:5173/auth/callback/naver
-```
-
-카카오는 이메일 권한 및 비즈 앱 설정 이슈가 있어 현재 프론트 연동 대상에서 제외합니다.
-
----
-
-## 환경변수 목록
-
-| 변수명 | 설명 | 필수 |
-|---|---|---|
-| DJANGO_SECRET_KEY | Django 시크릿 키 | O |
-| DJANGO_DEBUG | 디버그 모드 | O |
-| DJANGO_ALLOWED_HOSTS | 허용 호스트 | O |
-| DJANGO_SETTINGS_MODULE | Django settings module | O |
-| DATABASE_URL | PostgreSQL 연결 URL | O |
-| REDIS_URL | Redis 연결 URL | O |
-| KOPIS_API_KEY | KOPIS OpenAPI 키 | O |
-| GOOGLE_CLIENT_ID | 구글 클라이언트 ID | 소셜 로그인 사용 시 |
-| GOOGLE_CLIENT_SECRET | 구글 클라이언트 시크릿 | 소셜 로그인 사용 시 |
-| NAVER_CLIENT_ID | 네이버 클라이언트 ID | 소셜 로그인 사용 시 |
-| NAVER_CLIENT_SECRET | 네이버 클라이언트 시크릿 | 소셜 로그인 사용 시 |
-
----
-
-## AWS Elastic Beanstalk 배포
-
-### 1. Elastic Beanstalk 환경 변수
-
-Elastic Beanstalk 환경의 `Configuration > Software > Environment properties`에 값을 등록합니다.
+Elastic Beanstalk 필수 환경변수:
 
 ```env
 DJANGO_SECRET_KEY=your-production-secret
@@ -331,6 +816,11 @@ OPENAI_RECOMMENDATION_MODEL=gpt-4o-mini
 
 CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com
 CSRF_TRUSTED_ORIGINS=https://your-frontend-domain.com
+
+DJANGO_SECURE_SSL_REDIRECT=False
+DJANGO_SESSION_COOKIE_SECURE=False
+DJANGO_CSRF_COOKIE_SECURE=False
+DJANGO_SECURE_HSTS_SECONDS=0
 ```
 
 `DATABASE_URL` 대신 아래 `DB_*` 환경변수도 사용할 수 있습니다.
@@ -343,58 +833,33 @@ DB_HOST=your-rds-endpoint
 DB_PORT=5432
 ```
 
-초기 Beanstalk 기본 HTTP 도메인으로 테스트할 때는 아래 값들을 `False`/`0`으로 둡니다. HTTPS와 커스텀 도메인을 붙인 뒤 `True`로 올립니다.
-
-```env
-DJANGO_SECURE_SSL_REDIRECT=False
-DJANGO_SESSION_COOKIE_SECURE=False
-DJANGO_CSRF_COOKIE_SECURE=False
-DJANGO_SECURE_HSTS_SECONDS=0
-```
-
-### 2. 배포 파일 만들기
-
-루트에 있는 `Dockerfile`이 Elastic Beanstalk Docker 배포에서 사용됩니다. zip 파일을 만들 때 `Dockerfile`, `manage.py`, `requirements/`, `BE/`, `apps/`가 zip 최상단에 있어야 합니다.
-
-예시 PowerShell:
-
-```powershell
-Compress-Archive -Path Dockerfile,docker-compose.yml,manage.py,requirements,BE,apps,common,docker,.ebignore -DestinationPath culturepick-backend.zip -Force
-```
-
-### 3. 배포 후 확인
-
-배포가 끝나면 먼저 health endpoint를 확인합니다.
-
-```text
-http://culturepick.ap-northeast-2.elasticbeanstalk.com/health/
-```
-
-정상 응답:
-
-```json
-{"status": "ok"}
-```
-
-### 4. migrate
-
-현재 Docker entrypoint가 컨테이너 시작 시 아래 작업을 자동 실행합니다.
-
-```bash
-python manage.py collectstatic --noinput
-python manage.py migrate --noinput
-```
-
-수동으로 확인해야 할 때는 Elastic Beanstalk 인스턴스에 SSH 접속 후 실행 중인 컨테이너 안에서 실행합니다.
-
-```bash
-sudo docker ps
-sudo docker exec -it <container_id> python manage.py migrate
-```
-
-### 5. 주의
+주의:
 
 - `.env`, DB 비밀번호, API Key는 git에 올리지 않습니다.
-- `.env.example`에도 실제 비밀번호나 API Key를 적지 않습니다.
-- 캡처나 채팅에 노출된 키는 AWS/OpenAI/소셜 콘솔에서 재발급하는 것을 권장합니다.
+- 캡처/채팅/GitHub에 노출된 키는 재발급합니다.
+- HTTPS와 커스텀 도메인을 붙인 뒤 보안 쿠키/SSL redirect 값을 다시 강화합니다.
 
+---
+
+## 테스트
+
+```bash
+python manage.py check
+python manage.py test apps.users apps.logs apps.performances apps.recommendations
+```
+
+현재 로컬 `.venv`가 깨져 있으면 가상환경을 다시 생성한 뒤 실행합니다.
+
+---
+
+## 주요 기술
+
+| 분류 | 기술 |
+|---|---|
+| Framework | Django 5.1, Django REST Framework |
+| Auth | SimpleJWT, OAuth |
+| Database | PostgreSQL |
+| Infra | Docker, Elastic Beanstalk, RDS |
+| Data | KOPIS OpenAPI |
+| AI | OpenAI API |
+| Async 예정 | Redis, Celery |
