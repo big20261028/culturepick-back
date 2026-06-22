@@ -1,16 +1,31 @@
 from django.contrib.auth import get_user_model
+from django.core import signing
+from django.db.models import IntegerField, Prefetch, Value
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from .serializers import LocalLoginSerializer, LocalSignupSerializer, SocialAuthSerializer
+from apps.performances.models import Performance, UsersPerformanceAction
+from apps.performances.serializers import PerformanceListSerializer
+
+from .serializers import (
+    LocalLoginSerializer,
+    LocalSignupSerializer,
+    PasswordVerificationSerializer,
+    SocialAuthSerializer,
+    UserProfileSerializer,
+)
 from .services import get_google_info, get_kakao_info, get_naver_info
 
 User = get_user_model()
+
+PROFILE_UPDATE_TOKEN_MAX_AGE_SECONDS = 10 * 60
+PROFILE_UPDATE_TOKEN_SALT = "users.profile_update"
 
 SOCIAL_AUTH_STRATEGIES = {
     "kakao": get_kakao_info,
@@ -33,6 +48,25 @@ def _issue_tokens(user):
         "access": str(refresh.access_token),
         "refresh": str(refresh),
     }
+
+
+def _make_profile_update_token(user):
+    return signing.TimestampSigner(salt=PROFILE_UPDATE_TOKEN_SALT).sign(str(user.pk))
+
+
+def _is_valid_profile_update_token(user, token):
+    if not token:
+        return False
+
+    try:
+        value = signing.TimestampSigner(salt=PROFILE_UPDATE_TOKEN_SALT).unsign(
+            token,
+            max_age=PROFILE_UPDATE_TOKEN_MAX_AGE_SECONDS,
+        )
+    except signing.BadSignature:
+        return False
+
+    return value == str(user.pk)
 
 
 @api_view(["POST"])
@@ -141,3 +175,89 @@ def social_login(request):
 
     message = "회원가입 완료" if created else "로그인 성공"
     return Response({"message": message, **_issue_tokens(user)}, status=status.HTTP_200_OK)
+
+
+class MyPerformanceActionListView(APIView):
+    permission_classes = [IsAuthenticated]
+    action_type = None
+    response_type = ""
+
+    def get_queryset(self):
+        user_actions = UsersPerformanceAction.objects.filter(user=self.request.user)
+        return (
+            Performance.objects.filter(
+                users_performance_actions__user=self.request.user,
+                users_performance_actions__action_type=self.action_type,
+            )
+            .select_related("venue")
+            .prefetch_related(
+                Prefetch(
+                    "users_performance_actions",
+                    queryset=user_actions,
+                    to_attr="current_user_actions",
+                )
+            )
+            .annotate(search_score=Value(0, output_field=IntegerField()))
+            .order_by("-users_performance_actions__created_at", "title", "performance_id")
+        )
+
+    def get(self, request):
+        serializer = PerformanceListSerializer(
+            self.get_queryset(),
+            many=True,
+            context={"request": request},
+        )
+        return Response(
+            {
+                "type": self.response_type,
+                "total": len(serializer.data),
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class MyInterestPerformanceListView(MyPerformanceActionListView):
+    action_type = UsersPerformanceAction.ActionType.INTEREST
+    response_type = "interest"
+
+
+class MyWatchlistPerformanceListView(MyPerformanceActionListView):
+    action_type = UsersPerformanceAction.ActionType.WATCHLIST
+    response_type = "watchlist"
+
+
+class MyProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(UserProfileSerializer(request.user).data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        verification_token = request.data.get("verification_token")
+        if request.user.has_usable_password() and not _is_valid_profile_update_token(request.user, verification_token):
+            return Response(
+                {"verification_token": "A valid profile update verification token is required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = UserProfileSerializer(request.user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MyPasswordVerificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PasswordVerificationSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            {
+                "verified": True,
+                "verification_token": _make_profile_update_token(request.user),
+                "expires_in": PROFILE_UPDATE_TOKEN_MAX_AGE_SECONDS,
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -1,0 +1,102 @@
+from django.db.models import Count, F
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, status
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import SAFE_METHODS, AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import Comment, Post
+from .permissions import IsAuthorOrReadOnly
+from .serializers import CommentSerializer, PostImageUploadSerializer, PostSerializer
+
+
+class PostListCreateView(generics.ListCreateAPIView):
+    serializer_class = PostSerializer
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = (
+            Post.objects.select_related("author")
+            .annotate(comment_count=Count("comments"))
+            .order_by("-created_at", "-id")
+        )
+        keyword = self.request.query_params.get("keyword", "").strip()
+        if keyword:
+            queryset = queryset.filter(title__icontains=keyword)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)
+
+
+class PostDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = PostSerializer
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [AllowAny()]
+        return [IsAuthenticated(), IsAuthorOrReadOnly()]
+
+    def get_queryset(self):
+        return Post.objects.select_related("author").annotate(comment_count=Count("comments"))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        Post.objects.filter(pk=instance.pk).update(view_count=F("view_count") + 1)
+        instance.view_count += 1
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+class CommentListCreateView(generics.ListCreateAPIView):
+    serializer_class = CommentSerializer
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        return (
+            Comment.objects.filter(post_id=self.kwargs["post_id"])
+            .select_related("author", "post")
+            .order_by("created_at", "id")
+        )
+
+    def perform_create(self, serializer):
+        post = get_object_or_404(Post, pk=self.kwargs["post_id"])
+        serializer.save(post=post, author=self.request.user)
+
+
+class CommentDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = CommentSerializer
+    queryset = Comment.objects.select_related("author", "post")
+
+    def get_permissions(self):
+        if self.request.method in SAFE_METHODS:
+            return [AllowAny()]
+        return [IsAuthenticated(), IsAuthorOrReadOnly()]
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PostImageUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        serializer = PostImageUploadSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        image = serializer.save()
+        return Response(
+            PostImageUploadSerializer(image, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )

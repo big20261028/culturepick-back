@@ -98,6 +98,16 @@ Response `201`:
 }
 ```
 
+회원가입 검증 조건:
+
+- 이메일은 공백 제거 후 검사합니다.
+- 이메일은 필수이며 `@`를 포함해야 합니다.
+- 이메일에는 이모티콘을 사용할 수 없습니다.
+- 이메일 형식은 `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$` 기준입니다.
+- 비밀번호는 8자 이상이어야 합니다.
+- 비밀번호에는 영문자, 숫자, 특수문자 `!@#$%^&*(),.?":{}|<>`가 각각 1개 이상 포함되어야 합니다.
+- 비밀번호와 비밀번호 확인 값이 일치해야 합니다.
+
 ### 로그인
 
 ```http
@@ -184,6 +194,171 @@ Request:
   "code": "<authorization_code>",
   "state": "<state>",
   "redirect_uri": "http://localhost:5173/auth/callback/naver"
+}
+```
+
+---
+
+## My Page API
+
+마이페이지의 관심 공연과 볼 예정 공연은 로그인 사용자의 `UsersPerformanceAction` 데이터를 조회해서 내려줍니다. 응답의 `results`는 공연 목록 API와 같은 공연 카드 구조이므로 기존 공연 카드 컴포넌트를 재사용할 수 있습니다.
+
+### 내 회원정보 조회
+
+```http
+GET /api/v1/auth/me/
+Authorization: Bearer <access_token>
+```
+
+Response:
+
+```json
+{
+  "email": "user@example.com",
+  "nickname": "문화러",
+  "display_name": "문화러",
+  "phone": "010-1234-5678",
+  "provider": "local",
+  "created_at": "2026-06-22T12:00:00+09:00",
+  "updated_at": "2026-06-22T12:00:00+09:00",
+  "can_change_password": true,
+  "requires_password_verification": true
+}
+```
+
+소셜 로그인 계정은 로컬 비밀번호가 없으므로 `can_change_password=false`, `requires_password_verification=false`로 내려갑니다.
+`display_name`은 `nickname`이 있으면 닉네임, 없으면 이메일로 내려갑니다. 프론트에서 사용자명을 표기할 때는 이 필드를 사용하면 됩니다.
+
+### 회원정보 수정 전 비밀번호 확인
+
+```http
+POST /api/v1/auth/me/password/verify/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "password": "ValidPass123!"
+}
+```
+
+Response:
+
+```json
+{
+  "verified": true,
+  "verification_token": "<profile_update_token>",
+  "expires_in": 600
+}
+```
+
+`verification_token`은 10분 동안 유효합니다. 프론트는 이 토큰을 회원 수정 페이지로 전달하거나 상태에 보관한 뒤, 실제 수정 요청에 포함해야 합니다.
+
+소셜 로그인 계정은 이 API를 사용할 수 없습니다. 소셜 로그인 계정의 기본 프로필 수정은 `PATCH /api/v1/auth/me/`를 바로 호출하면 됩니다.
+
+### 내 회원정보 수정
+
+```http
+PATCH /api/v1/auth/me/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "verification_token": "<profile_update_token>",
+  "nickname": "새 닉네임",
+  "phone": "010-9999-9999",
+  "new_password": "NewValidPass123!",
+  "new_password_confirm": "NewValidPass123!"
+}
+```
+
+수정할 필드만 보내면 됩니다. 비밀번호를 바꾸지 않을 때는 `new_password`, `new_password_confirm`을 생략하거나 둘 다 빈 문자열로 보내면 됩니다.
+
+로컬 계정은 `verification_token`이 필요합니다. 소셜 로그인 계정은 `verification_token` 없이 `nickname`, `phone`을 수정할 수 있지만, 이 API에서 비밀번호 변경은 지원하지 않습니다.
+
+수정 가능 필드:
+
+- `nickname`
+- `phone`
+- `new_password`, `new_password_confirm`
+
+읽기 전용 필드:
+
+- `email`
+- `provider`
+- `created_at`
+- `updated_at`
+
+### 관심 공연 목록
+
+```http
+GET /api/v1/auth/me/interests/
+Authorization: Bearer <access_token>
+```
+
+Response:
+
+```json
+{
+  "type": "interest",
+  "total": 1,
+  "results": [
+    {
+      "performance_id": "PF000001",
+      "title": "공연 제목",
+      "genre": "뮤지컬",
+      "genre_code": "GGGA",
+      "poster_url": "https://...",
+      "venue": {
+        "venue_id": "FC000001",
+        "name": "공연장명",
+        "sido": "서울특별시",
+        "gugun": "종로구"
+      },
+      "is_interested": true,
+      "is_watchlisted": false,
+      "search_score": 0
+    }
+  ]
+}
+```
+
+### 볼 예정 공연 목록
+
+```http
+GET /api/v1/auth/me/watchlist/
+Authorization: Bearer <access_token>
+```
+
+Response:
+
+```json
+{
+  "type": "watchlist",
+  "total": 1,
+  "results": [
+    {
+      "performance_id": "PF000002",
+      "title": "볼 예정 공연",
+      "genre": "연극",
+      "genre_code": "AAAA",
+      "poster_url": "https://...",
+      "venue": {
+        "venue_id": "FC000002",
+        "name": "공연장명",
+        "sido": "부산광역시",
+        "gugun": "해운대구"
+      },
+      "is_interested": false,
+      "is_watchlisted": true,
+      "search_score": 0
+    }
+  ]
 }
 ```
 
@@ -405,6 +580,161 @@ Response:
   "zzim_count": 12
 }
 ```
+
+---
+
+## Community API
+
+자유게시판 기능입니다. Tiptap/Toast UI Editor가 만든 본문을 `content`에 저장하고, 프론트는 `content_format`으로 렌더링 방식을 구분하면 됩니다.
+
+지원 포맷:
+
+- `html`: Tiptap HTML 또는 Toast 렌더링 HTML
+- `markdown`: Toast UI Markdown
+- `json`: Tiptap/ProseMirror JSON 문자열
+
+HTML을 렌더링할 때는 프론트에서 DOMPurify 같은 sanitizer를 반드시 적용하세요.
+
+### 게시글 목록
+
+```http
+GET /api/v1/community/posts/
+```
+
+Query parameters:
+
+| 이름 | 설명 | 예시 |
+|---|---|---|
+| `keyword` | 제목 검색 | `후기` |
+| `page` | 페이지 번호 | `1` |
+| `page_size` | 페이지 크기 | `20` |
+
+Response:
+
+```json
+{
+  "total": 1,
+  "page": 1,
+  "page_size": 20,
+  "results": [
+    {
+      "id": 1,
+      "author": 3,
+      "author_email": "user@example.com",
+      "author_nickname": "문화러",
+      "author_display_name": "문화러",
+      "title": "공연 후기",
+      "content": "<p>좋았어요.</p>",
+      "content_format": "html",
+      "thumbnail_url": "https://...",
+      "view_count": 0,
+      "comment_count": 2,
+      "created_at": "2026-06-22T12:00:00+09:00",
+      "updated_at": "2026-06-22T12:00:00+09:00"
+    }
+  ]
+}
+```
+
+게시글/댓글 작성자 표기는 `author_display_name`을 사용합니다. 작성자 닉네임이 없으면 이메일이 들어갑니다.
+
+### 게시글 작성
+
+```http
+POST /api/v1/community/posts/
+Authorization: Bearer <access_token>
+```
+
+Request:
+
+```json
+{
+  "title": "공연 후기",
+  "content": "<p>이미지와 함께 남기는 후기입니다.</p>",
+  "content_format": "html",
+  "thumbnail_url": "https://culturepick-community-images-241732001230-ap-northeast-2-an.s3.ap-northeast-2.amazonaws.com/community/images/..."
+}
+```
+
+### 게시글 상세/수정/삭제
+
+```http
+GET /api/v1/community/posts/{id}/
+PATCH /api/v1/community/posts/{id}/
+DELETE /api/v1/community/posts/{id}/
+```
+
+수정/삭제는 작성자만 가능합니다.
+
+### 댓글 목록/작성
+
+```http
+GET /api/v1/community/posts/{post_id}/comments/
+POST /api/v1/community/posts/{post_id}/comments/
+```
+
+댓글 작성은 로그인이 필요합니다.
+
+Request:
+
+```json
+{
+  "content": "댓글 내용입니다."
+}
+```
+
+### 댓글 수정/삭제
+
+```http
+PATCH /api/v1/community/comments/{id}/
+DELETE /api/v1/community/comments/{id}/
+```
+
+수정/삭제는 작성자만 가능합니다.
+
+### 에디터 이미지 업로드
+
+```http
+POST /api/v1/community/images/
+Authorization: Bearer <access_token>
+Content-Type: multipart/form-data
+```
+
+Form data:
+
+```text
+image=<file>
+```
+
+허용 타입:
+
+- `image/jpeg`
+- `image/png`
+- `image/webp`
+- `image/gif`
+
+최대 크기: 5MB
+
+Response:
+
+```json
+{
+  "id": 1,
+  "image": "community/images/2026/06/22/....png",
+  "image_url": "https://culturepick-community-images-241732001230-ap-northeast-2-an.s3.ap-northeast-2.amazonaws.com/community/images/2026/06/22/....png",
+  "original_name": "poster.png",
+  "size": 12345,
+  "content_type": "image/png",
+  "created_at": "2026-06-22T12:00:00+09:00"
+}
+```
+
+프론트 에디터 연동 흐름:
+
+1. 에디터에서 이미지 삽입 이벤트 발생
+2. `/api/v1/community/images/`에 multipart 업로드
+3. 응답의 `image_url`을 에디터 본문에 삽입
+4. 게시글 작성 시 `content` 안에 이미지 URL이 포함된 상태로 저장
 
 ---
 
@@ -631,6 +961,8 @@ POST /api/v1/logs/qna/
 - 공연 목록은 `searchData` 기준으로 렌더링
 - 공연 상세 진입 시 `performance_id` 사용
 - 관심/볼예정 버튼은 `is_interested`, `is_watchlisted` 응답값으로 상태 갱신
+- 게시판 본문 HTML 렌더링 시 DOMPurify 등으로 sanitize
+- 에디터 이미지는 먼저 `/api/v1/community/images/`에 업로드한 뒤 응답 `image_url`을 본문에 삽입
 - 추천 API는 로그인 필요
 - 추천 피드백 저장 시 `session_id` 보관 필요
 
@@ -797,7 +1129,16 @@ http://127.0.0.1:8000
 배포 zip 생성 예시:
 
 ```powershell
-tar -a -cf culturepick-backend-eb.zip --exclude='__pycache__' --exclude='*.pyc' Dockerfile docker-compose.yml manage.py requirements BE apps common docker .ebignore
+tar -a -cf culturepick-backend-eb.zip --exclude='__pycache__' --exclude='*.pyc' Dockerfile docker-compose.yml manage.py requirements BE apps common docker .platform .ebignore
+```
+
+`.platform/hooks/postdeploy/01_migrate.sh`가 포함되어 있으므로 Elastic Beanstalk 배포가 끝난 뒤 web 컨테이너 안에서 `python manage.py migrate --noinput`이 자동 실행됩니다. 새 모델이나 migration이 추가된 경우에도 별도 SSH 접속 없이 배포 과정에서 DB 스키마가 갱신됩니다.
+
+배포 로그에서 아래 메시지를 확인하면 migration hook이 정상 실행된 것입니다.
+
+```text
+[postdeploy] Running Django migrations in container <container_id>...
+[postdeploy] Django migrations completed.
 ```
 
 Elastic Beanstalk 필수 환경변수:
@@ -813,6 +1154,10 @@ DATABASE_URL=postgresql://USER:PASSWORD@RDS_ENDPOINT:5432/culturepick
 KOPIS_API_KEY=your-kopis-api-key
 OPENAI_API_SECRET_KEY=your-openai-key
 OPENAI_RECOMMENDATION_MODEL=gpt-4o-mini
+
+AWS_STORAGE_BUCKET_NAME=culturepick-community-images-241732001230-ap-northeast-2-an
+AWS_S3_REGION_NAME=ap-northeast-2
+AWS_S3_CUSTOM_DOMAIN=culturepick-community-images-241732001230-ap-northeast-2-an.s3.ap-northeast-2.amazonaws.com
 
 CORS_ALLOWED_ORIGINS=https://your-frontend-domain.com
 CSRF_TRUSTED_ORIGINS=https://your-frontend-domain.com
@@ -836,6 +1181,7 @@ DB_PORT=5432
 주의:
 
 - `.env`, DB 비밀번호, API Key는 git에 올리지 않습니다.
+- 운영에서는 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`를 넣지 않고 Elastic Beanstalk EC2 Role 권한을 사용하는 것을 권장합니다.
 - 캡처/채팅/GitHub에 노출된 키는 재발급합니다.
 - HTTPS와 커스텀 도메인을 붙인 뒤 보안 쿠키/SSL redirect 값을 다시 강화합니다.
 
@@ -845,7 +1191,7 @@ DB_PORT=5432
 
 ```bash
 python manage.py check
-python manage.py test apps.users apps.logs apps.performances apps.recommendations
+python manage.py test apps.users apps.logs apps.performances apps.recommendations apps.community
 ```
 
 현재 로컬 `.venv`가 깨져 있으면 가상환경을 다시 생성한 뒤 실행합니다.
