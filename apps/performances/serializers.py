@@ -7,7 +7,14 @@ Serializer:      모델과 무관한 일회성 데이터 검증
 '''
 
 from rest_framework import serializers
-from .models import Performance, Venue, PerformanceImage, BookingLink, UsersPerformanceAction
+from .models import (
+    BookingLink,
+    Performance,
+    PerformanceImage,
+    PerformancePrice,
+    UsersPerformanceAction,
+    Venue,
+)
 
 class VenueSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,6 +36,12 @@ class PerformanceImageSerializer(serializers.ModelSerializer):
         fields = ('image_url', 'sort_order')
 
 
+class PerformancePriceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PerformancePrice
+        fields = ('label', 'price', 'currency', 'raw_text', 'sort_order')
+
+
 class BookingLinkSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingLink
@@ -42,6 +55,7 @@ class PerformanceActionSerializer(serializers.Serializer):
 
 class PerformanceListSerializer(serializers.ModelSerializer):
     venue = VenueSerializer(read_only=True)
+    price_options = PerformancePriceSerializer(many=True, read_only=True)
     search_score = serializers.IntegerField(read_only=True)
     is_interested = serializers.SerializerMethodField()
     is_watchlisted = serializers.SerializerMethodField()
@@ -63,6 +77,7 @@ class PerformanceListSerializer(serializers.ModelSerializer):
             'min_price',
             'max_price',
             'is_free',
+            'price_options',
             'openrun',
             'is_child',
             'is_festival',
@@ -97,6 +112,7 @@ class PerformanceListSerializer(serializers.ModelSerializer):
 class PerformanceDetailSerializer(serializers.ModelSerializer):
     venue = VenueSerializer(read_only=True)
     images = PerformanceImageSerializer(many=True, read_only=True)
+    price_options = PerformancePriceSerializer(many=True, read_only=True)
     booking_links = BookingLinkSerializer(many=True, read_only=True)
 
     is_interested = serializers.SerializerMethodField()

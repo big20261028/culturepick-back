@@ -3,6 +3,7 @@
 local.py / production.py 가 이 파일을 상속합니다.
 """
 
+import ssl
 from pathlib import Path
 
 import environ
@@ -172,26 +173,52 @@ SOCIAL_AUTH_NAVER_KEY = env("NAVER_CLIENT_ID", default="")
 SOCIAL_AUTH_NAVER_SECRET = env("NAVER_CLIENT_SECRET", default="")
 
 # ── Celery ────────────────────────────────────────────────────────────
-CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = "django-db"          # django_celery_results
+REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="") or REDIS_URL
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="") or "django-db"
 CELERY_RESULT_EXTENDED = True
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_ENABLE_REMOTE_CONTROL = env.bool("CELERY_WORKER_ENABLE_REMOTE_CONTROL", default=False)
+
+CELERY_REDIS_GLOBAL_KEYPREFIX = env("CELERY_REDIS_GLOBAL_KEYPREFIX", default="{culturepick-celery}:")
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "global_keyprefix": CELERY_REDIS_GLOBAL_KEYPREFIX,
+}
+
+CELERY_REDIS_RESULT_GLOBAL_KEYPREFIX = env(
+    "CELERY_REDIS_RESULT_GLOBAL_KEYPREFIX",
+    default="{culturepick-celery-result}:",
+)
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
+    "global_keyprefix": CELERY_REDIS_RESULT_GLOBAL_KEYPREFIX,
+}
+
+if CELERY_BROKER_URL.startswith("rediss://"):
+    CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
+
+if isinstance(CELERY_RESULT_BACKEND, str) and CELERY_RESULT_BACKEND.startswith("rediss://"):
+    CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
 
 from celery.schedules import crontab
 
-CELERY_BEAT_SCHEDULE = {
-    "sync-ongoing-performances": {
-        "task": "apps.performances.tasks.sync_ongoing_performances",
-        "schedule": crontab(hour=4, minute=0),
-    },
-    "sync-upcoming-performances": {
-        "task": "apps.performances.tasks.sync_upcoming_performances",
-        "schedule": crontab(hour=4, minute=30),
-    },
-}
+CELERY_ENABLE_KOPIS_BEAT_SCHEDULE = env.bool("CELERY_ENABLE_KOPIS_BEAT_SCHEDULE", default=False)
+CELERY_BEAT_SCHEDULE = {}
+
+if CELERY_ENABLE_KOPIS_BEAT_SCHEDULE:
+    CELERY_BEAT_SCHEDULE = {
+        "sync-ongoing-performances": {
+            "task": "apps.performances.tasks.sync_ongoing_performances",
+            "schedule": crontab(hour=4, minute=0),
+        },
+        "sync-upcoming-performances": {
+            "task": "apps.performances.tasks.sync_upcoming_performances",
+            "schedule": crontab(hour=4, minute=30),
+        },
+    }
 
 # ── KOPIS API ─────────────────────────────────────────────────────────
 KOPIS_API_KEY = env("KOPIS_API_KEY", default="")

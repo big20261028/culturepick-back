@@ -12,8 +12,8 @@ class CommentInline(admin.TabularInline):
 
 @admin.register(Post)
 class PostAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "author", "content_format", "view_count", "created_at", "updated_at")
-    list_filter = ("content_format", "created_at")
+    list_display = ("id", "title", "category", "author", "content_format", "view_count", "created_at", "updated_at")
+    list_filter = ("category", "content_format", "created_at")
     search_fields = ("title", "content", "author__email", "author__nickname")
     readonly_fields = ("view_count", "created_at", "updated_at")
     inlines = [CommentInline]

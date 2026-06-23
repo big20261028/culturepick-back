@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
 
+from apps.community.models import Post
 from apps.performances.models import Performance, UsersPerformanceAction, Venue
 
 User = get_user_model()
@@ -97,6 +98,50 @@ class LocalAuthAPITests(APITestCase):
         user = User.objects.get(email="no-nickname@example.com")
         self.assertEqual(user.nickname, "")
 
+    def test_register_rejects_duplicate_email(self):
+        User.objects.create_user(
+            email="duplicate@example.com",
+            password="ValidPass123!",
+            nickname="existing",
+        )
+
+        response = self.client.post(
+            reverse("register"),
+            {
+                "email": "duplicate@example.com",
+                "password": "ValidPass123!",
+                "password_confirm": "ValidPass123!",
+                "nickname": "new",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data["detail"])
+        self.assertEqual(User.objects.filter(email="duplicate@example.com").count(), 1)
+
+    def test_register_rejects_duplicate_email_case_insensitive(self):
+        User.objects.create_user(
+            email="case@example.com",
+            password="ValidPass123!",
+            nickname="existing",
+        )
+
+        response = self.client.post(
+            reverse("register"),
+            {
+                "email": "CASE@example.com",
+                "password": "ValidPass123!",
+                "password_confirm": "ValidPass123!",
+                "nickname": "new",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data["detail"])
+        self.assertEqual(User.objects.filter(email__iexact="case@example.com").count(), 1)
+
 
 class MyPagePerformanceAPITests(APITestCase):
     def setUp(self):
@@ -188,6 +233,71 @@ class MyPagePerformanceAPITests(APITestCase):
         )
         self.assertFalse(response.data["results"][0]["is_interested"])
         self.assertTrue(response.data["results"][0]["is_watchlisted"])
+
+
+class MyPageCommunityPostAPITests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="mypage-posts@example.com",
+            password="ValidPass123!",
+            nickname="writer",
+        )
+        self.other_user = User.objects.create_user(
+            email="other-mypage-posts@example.com",
+            password="ValidPass123!",
+            nickname="other",
+        )
+        self.my_post = Post.objects.create(
+            author=self.user,
+            category=Post.Category.PERFORMANCE_REVIEW,
+            title="My Review",
+            content="레미제라블 후기",
+            content_format=Post.ContentFormat.HTML,
+            view_count=7,
+        )
+        Post.objects.create(
+            author=self.user,
+            category=Post.Category.INFORMATION,
+            title="Parking Tip",
+            content="주차 정보",
+            content_format=Post.ContentFormat.HTML,
+        )
+        Post.objects.create(
+            author=self.other_user,
+            category=Post.Category.PERFORMANCE_REVIEW,
+            title="Other Review",
+            content="다른 사용자 글",
+            content_format=Post.ContentFormat.HTML,
+        )
+
+    def test_my_posts_require_authentication(self):
+        response = self.client.get(reverse("my_community_posts"))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_my_posts_returns_only_current_user_posts(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse("my_community_posts"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 2)
+        titles = {item["title"] for item in response.data["results"]}
+        self.assertEqual(titles, {"My Review", "Parking Tip"})
+        self.assertEqual(response.data["results"][0]["author_display_name"], "writer")
+
+    def test_my_posts_supports_category_and_keyword_filters(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(
+            reverse("my_community_posts"),
+            {"category": "공연후기", "q": "레미제라블"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.my_post.id)
+        self.assertEqual(response.data["results"][0]["category_label"], "공연후기")
 
 
 class MyProfileAPITests(APITestCase):

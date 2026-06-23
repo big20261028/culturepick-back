@@ -16,4 +16,5 @@ sync_log.txt
 docker-compose.local.yml
 staticfiles/
 media/
+deploy/
 *.pdf

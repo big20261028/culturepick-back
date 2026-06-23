@@ -27,6 +27,7 @@ import logging
 from datetime import date, timedelta
 
 from celery import shared_task
+from django.core.management import call_command
 from django.utils import timezone
 
 from apps.performances.kopis.client import GenreCode, KopisClient, PrfState
@@ -38,9 +39,49 @@ TARGET_GENRES = [
     GenreCode.PLAY,
     GenreCode.MUSICAL,
     GenreCode.CLASSICAL,
+    GenreCode.KOREAN_MUSIC,
     GenreCode.DANCE,
     GenreCode.POPULAR_MUSIC,
 ]
+
+
+@shared_task(name="apps.performances.tasks.ping_task")
+def ping_task():
+    logger.info("celery ping task received")
+    return {
+        "status": "ok",
+        "message": "pong",
+        "finished_at": timezone.now().isoformat(),
+    }
+
+
+@shared_task(
+    bind=True,
+    max_retries=1,
+    name="apps.performances.tasks.sync_kopis_task",
+)
+def sync_kopis_task(self, stdate, eddate, genre=None, with_venues=True):
+    try:
+        options = {
+            "stdate": stdate,
+            "eddate": eddate,
+            "with_venues": with_venues,
+        }
+        if genre:
+            options["genre"] = genre
+
+        call_command("sync_kopis", **options)
+        return {
+            "status": "ok",
+            "stdate": stdate,
+            "eddate": eddate,
+            "genre": genre,
+            "with_venues": with_venues,
+            "finished_at": timezone.now().isoformat(),
+        }
+    except Exception as exc:
+        logger.error("sync_kopis_task error: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
 
 
 def _date_range(days_before=0, days_after=90):

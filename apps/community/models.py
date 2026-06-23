@@ -20,10 +20,22 @@ class Post(models.Model):
         MARKDOWN = "markdown", "markdown"
         JSON = "json", "json"
 
+    class Category(models.TextChoices):
+        PERFORMANCE_REVIEW = "performance_review", "공연후기"
+        PERFORMANCE_RECOMMENDATION = "performance_recommendation", "공연추천"
+        INFORMATION = "information", "정보공유"
+        FREE_DISCUSSION = "free_discussion", "자유토론"
+
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="community_posts",
+    )
+    category = models.CharField(
+        max_length=40,
+        choices=Category.choices,
+        default=Category.FREE_DISCUSSION,
+        db_index=True,
     )
     title = models.CharField(max_length=200)
     content = models.TextField()
@@ -43,6 +55,33 @@ class Post(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.pk})"
+
+
+POST_CATEGORY_ALIASES = {
+    "": "",
+    "all": "",
+    "전체": "",
+    "performance_review": Post.Category.PERFORMANCE_REVIEW,
+    "review": Post.Category.PERFORMANCE_REVIEW,
+    "공연후기": Post.Category.PERFORMANCE_REVIEW,
+    "performance_recommendation": Post.Category.PERFORMANCE_RECOMMENDATION,
+    "recommendation": Post.Category.PERFORMANCE_RECOMMENDATION,
+    "recommend": Post.Category.PERFORMANCE_RECOMMENDATION,
+    "공연추천": Post.Category.PERFORMANCE_RECOMMENDATION,
+    "information": Post.Category.INFORMATION,
+    "info": Post.Category.INFORMATION,
+    "정보공유": Post.Category.INFORMATION,
+    "free_discussion": Post.Category.FREE_DISCUSSION,
+    "discussion": Post.Category.FREE_DISCUSSION,
+    "free": Post.Category.FREE_DISCUSSION,
+    "자유토론": Post.Category.FREE_DISCUSSION,
+}
+
+
+def normalize_post_category(value: str | None) -> str | None:
+    if value is None:
+        return ""
+    return POST_CATEGORY_ALIASES.get(str(value).strip())
 
 
 class Comment(models.Model):

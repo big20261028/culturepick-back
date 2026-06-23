@@ -1,12 +1,13 @@
-from django.db.models import Count, F
+from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import SAFE_METHODS, AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Comment, Post
+from .models import Comment, Post, normalize_post_category
 from .permissions import IsAuthorOrReadOnly
 from .serializers import CommentSerializer, PostImageUploadSerializer, PostSerializer
 
@@ -25,9 +26,26 @@ class PostListCreateView(generics.ListCreateAPIView):
             .annotate(comment_count=Count("comments"))
             .order_by("-created_at", "-id")
         )
-        keyword = self.request.query_params.get("keyword", "").strip()
+
+        category_param = (
+            self.request.query_params.get("category")
+            or self.request.query_params.get("category_slug")
+            or ""
+        )
+        category = normalize_post_category(category_param)
+        if category is None:
+            raise ValidationError({"category": "Invalid category."})
+        if category:
+            queryset = queryset.filter(category=category)
+
+        keyword = (
+            self.request.query_params.get("keyword")
+            or self.request.query_params.get("search")
+            or self.request.query_params.get("q")
+            or ""
+        ).strip()
         if keyword:
-            queryset = queryset.filter(title__icontains=keyword)
+            queryset = queryset.filter(Q(title__icontains=keyword) | Q(content__icontains=keyword))
         return queryset
 
     def perform_create(self, serializer):

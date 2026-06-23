@@ -68,7 +68,10 @@ class LocalSignupSerializer(serializers.ModelSerializer):
         fields = ("email", "password", "password_confirm", "nickname")
 
     def validate_email(self, value):
-        return validate_frontend_email(value)
+        email = validate_frontend_email(value)
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError("Email is already registered.")
+        return email
 
     def validate_password(self, value):
         validate_frontend_password(value)

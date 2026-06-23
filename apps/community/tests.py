@@ -34,6 +34,7 @@ class CommunityPostAPITests(APITestCase):
         )
         self.post = Post.objects.create(
             author=self.user,
+            category=Post.Category.PERFORMANCE_REVIEW,
             title="First Post",
             content="<p>Hello</p>",
             content_format=Post.ContentFormat.HTML,
@@ -72,7 +73,64 @@ class CommunityPostAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["author_email"], self.user.email)
         self.assertEqual(response.data["author_display_name"], "writer")
+        self.assertEqual(response.data["category"], Post.Category.FREE_DISCUSSION)
+        self.assertEqual(response.data["category_label"], "자유토론")
         self.assertTrue(Post.objects.filter(title="Created Post", author=self.user).exists())
+
+    def test_authenticated_user_can_create_post_with_korean_category(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse("community_post_list"),
+            {
+                "category": "공연추천",
+                "title": "Recommended Post",
+                "content": "body",
+                "content_format": "markdown",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["category"], Post.Category.PERFORMANCE_RECOMMENDATION)
+        self.assertEqual(response.data["category_label"], "공연추천")
+
+    def test_post_list_filters_by_category(self):
+        Post.objects.create(
+            author=self.user,
+            category=Post.Category.INFORMATION,
+            title="Parking Tip",
+            content="body",
+            content_format=Post.ContentFormat.HTML,
+        )
+
+        response = self.client.get(
+            reverse("community_post_list"),
+            {"category": "정보공유"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["results"][0]["title"], "Parking Tip")
+        self.assertEqual(response.data["results"][0]["category"], Post.Category.INFORMATION)
+
+    def test_post_list_searches_title_and_content(self):
+        Post.objects.create(
+            author=self.user,
+            category=Post.Category.INFORMATION,
+            title="Parking Tip",
+            content="예술의전당 주차 정보",
+            content_format=Post.ContentFormat.HTML,
+        )
+
+        response = self.client.get(
+            reverse("community_post_list"),
+            {"search": "주차"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["results"][0]["title"], "Parking Tip")
 
     def test_post_author_display_name_falls_back_to_email(self):
         user = User.objects.create_user(

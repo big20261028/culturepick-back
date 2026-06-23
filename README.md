@@ -417,6 +417,22 @@ Response:
       "min_price": 50000,
       "max_price": 150000,
       "is_free": false,
+      "price_options": [
+        {
+          "label": "R석",
+          "price": 150000,
+          "currency": "KRW",
+          "raw_text": "R석 150,000원",
+          "sort_order": 0
+        },
+        {
+          "label": "S석",
+          "price": 100000,
+          "currency": "KRW",
+          "raw_text": "S석 100,000원",
+          "sort_order": 1
+        }
+      ],
       "openrun": false,
       "is_child": false,
       "is_festival": false,
@@ -454,6 +470,22 @@ Response:
       "min_price": 50000,
       "max_price": 150000,
       "is_free": false,
+      "price_options": [
+        {
+          "label": "R석",
+          "price": 150000,
+          "currency": "KRW",
+          "raw_text": "R석 150,000원",
+          "sort_order": 0
+        },
+        {
+          "label": "S석",
+          "price": 100000,
+          "currency": "KRW",
+          "raw_text": "S석 100,000원",
+          "sort_order": 1
+        }
+      ],
       "openrun": false,
       "is_child": false,
       "is_festival": false,
@@ -1119,12 +1151,12 @@ http://127.0.0.1:8000
 
 ## AWS 배포
 
-현재 배포용 루트 `docker-compose.yml`은 web 컨테이너 하나만 실행합니다.
+현재 배포용 루트 `docker-compose.yml`은 web, celery-worker, celery-beat 컨테이너를 기본 실행합니다.
 
 - Django settings: `BE.settings.production`
-- 실행 서버: `gunicorn`
+- 실행 서버: `gunicorn` (`--workers 1`)
 - DB: RDS PostgreSQL
-- Redis/Celery: 1차 배포에서는 제외
+- Redis/Celery: celery-worker는 `--concurrency=1`로 실행하며, celery-beat는 PostgreSQL RDS와 ElastiCache Valkey Serverless를 사용합니다.
 
 배포 zip 생성 예시:
 
@@ -1132,13 +1164,13 @@ http://127.0.0.1:8000
 tar -a -cf culturepick-backend-eb.zip --exclude='__pycache__' --exclude='*.pyc' Dockerfile docker-compose.yml manage.py requirements BE apps common docker .platform .ebignore
 ```
 
-`.platform/hooks/postdeploy/01_migrate.sh`가 포함되어 있으므로 Elastic Beanstalk 배포가 끝난 뒤 web 컨테이너 안에서 `python manage.py migrate --noinput`이 자동 실행됩니다. 새 모델이나 migration이 추가된 경우에도 별도 SSH 접속 없이 배포 과정에서 DB 스키마가 갱신됩니다.
+web 컨테이너는 `gunicorn` 시작 전에 `python manage.py migrate --noinput`을 자동 실행합니다. 새 모델이나 migration이 추가된 경우에도 별도 SSH 접속 없이 배포 과정에서 DB 스키마가 갱신됩니다.
 
-배포 로그에서 아래 메시지를 확인하면 migration hook이 정상 실행된 것입니다.
+배포 로그에서 아래 메시지를 확인하면 migration이 정상 실행된 것입니다.
 
 ```text
-[postdeploy] Running Django migrations in container <container_id>...
-[postdeploy] Django migrations completed.
+Running database migrations...
+Operations to perform:
 ```
 
 Elastic Beanstalk 필수 환경변수:
@@ -1154,6 +1186,14 @@ DATABASE_URL=postgresql://USER:PASSWORD@RDS_ENDPOINT:5432/culturepick
 KOPIS_API_KEY=your-kopis-api-key
 OPENAI_API_SECRET_KEY=your-openai-key
 OPENAI_RECOMMENDATION_MODEL=gpt-4o-mini
+
+REDIS_URL=rediss://your-elasticache-serverless-endpoint:6379/0
+CELERY_BROKER_URL=rediss://your-elasticache-serverless-endpoint:6379/0
+CELERY_RESULT_BACKEND=django-db
+CELERY_ENABLE_KOPIS_BEAT_SCHEDULE=False
+CELERY_WORKER_ENABLE_REMOTE_CONTROL=False
+CELERY_REDIS_GLOBAL_KEYPREFIX={culturepick-celery}:
+CELERY_REDIS_RESULT_GLOBAL_KEYPREFIX={culturepick-celery-result}:
 
 AWS_STORAGE_BUCKET_NAME=culturepick-community-images-241732001230-ap-northeast-2-an
 AWS_S3_REGION_NAME=ap-northeast-2
@@ -1177,6 +1217,89 @@ DB_PASSWORD=your-rds-password
 DB_HOST=your-rds-endpoint
 DB_PORT=5432
 ```
+
+Redis/Celery 환경변수를 Elastic Beanstalk에 추가하거나 수정한 뒤에는 이미 실행 중인 컨테이너에 즉시 반영되지 않을 수 있습니다. EB 콘솔에서 앱 서버를 다시 시작하거나 새 zip을 재배포한 뒤 컨테이너 안에서 값을 확인합니다.
+
+```bash
+sudo docker exec -it current-web-1 sh
+printenv | grep -E "REDIS|CELERY|DJANGO"
+```
+
+EC2 host에는 값이 있는데 컨테이너 안에 없다면, `docker-compose.yml`의 `services.web.environment`에 해당 변수가 명시되어 있는지 확인합니다.
+
+```bash
+sudo /opt/elasticbeanstalk/bin/get-config environment | grep -E "REDIS|CELERY"
+```
+
+배포 후에는 컨테이너가 3개 떠 있는지 확인합니다.
+
+```bash
+sudo docker ps
+```
+
+기대 컨테이너:
+
+```text
+current-web-1
+current-celery-worker-1
+current-celery-beat-1
+```
+
+worker/beat 로그 확인:
+
+```bash
+sudo docker logs -f current-celery-worker-1
+sudo docker logs -f current-celery-beat-1
+```
+
+ElastiCache Valkey Serverless는 클러스터형 Redis처럼 동작하므로 Celery의 remote control, mingle, gossip 기능이 여러 Redis key를 동시에 조회하다가 아래 오류를 낼 수 있습니다.
+
+```text
+CROSSSLOT Keys in request don't hash to the same slot
+```
+
+현재 배포 설정은 이를 피하기 위해 worker를 `--without-mingle --without-gossip`로 실행하고, `CELERY_WORKER_ENABLE_REMOTE_CONTROL=False`를 기본값으로 사용합니다. Redis key도 같은 hash slot에 들어가도록 `CELERY_REDIS_GLOBAL_KEYPREFIX`에 `{culturepick-celery}:` 형태의 hash tag prefix를 사용합니다.
+
+micro급 인스턴스에서는 Docker, Django, Gunicorn, Celery를 함께 실행하면 메모리 사용률이 높아질 수 있습니다. 현재 배포 설정은 비용을 우선해 Gunicorn worker를 1개로, Celery worker concurrency를 1로 제한합니다. 이 상태에서도 메모리 경고가 계속되면 `t3.small` 이상으로 올리거나 celery-beat 분리를 검토합니다.
+
+Celery 연결 테스트:
+
+```bash
+sudo docker exec -it current-web-1 sh
+python manage.py shell
+```
+
+```python
+from apps.performances.tasks import ping_task
+
+result = ping_task.delay()
+result.id
+```
+
+worker 로그에 `apps.performances.tasks.ping_task` 수신/성공 로그가 보이면 정상입니다.
+
+KOPIS 동기화 task는 처음부터 긴 기간으로 실행하지 말고 짧은 기간/단일 장르로 테스트합니다.
+
+```python
+from apps.performances.tasks import sync_kopis_task
+
+sync_kopis_task.delay(
+    stdate="20260701",
+    eddate="20260702",
+    genre="CCCA",
+    with_venues=True,
+)
+```
+
+자동 KOPIS 주기 수집은 worker/beat와 수동 task 검증이 끝난 뒤 켭니다.
+
+```env
+CELERY_ENABLE_KOPIS_BEAT_SCHEDULE=True
+```
+
+이 값을 켜면 `sync_ongoing_performances`, `sync_upcoming_performances` beat schedule이 활성화됩니다.
+
+현재 `docker-compose.yml`에는 PostgreSQL/Redis 컨테이너를 포함하지 않습니다. PostgreSQL은 RDS, Redis는 ElastiCache Valkey Serverless를 사용합니다.
 
 주의:
 

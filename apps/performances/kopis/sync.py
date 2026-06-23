@@ -16,7 +16,7 @@ from typing import NamedTuple
 from django.db import transaction
 from django.utils import timezone
 
-from ..models import BookingLink, Performance, PerformanceImage, Venue
+from ..models import BookingLink, Performance, PerformanceImage, PerformancePrice, Venue
 from ..utils.address import is_blank_region_value, resolve_sido_gugun
 from .codes import genre_code_from_name, status_code_from_name
 from .client import KopisClient, RawPerformanceDetail, RawVenueDetail
@@ -101,6 +101,57 @@ def parse_price_info(raw: str) -> tuple[int | None, int | None, bool, str]:
         return None, None, False, "unparsed"
 
     return min(prices), max(prices), False, "parsed"
+
+
+def parse_price_options(raw: str) -> list[dict]:
+    value = raw.strip()
+    if not value:
+        return []
+
+    if "무료" in value and not re.search(r"\d", value):
+        return [
+            {
+                "label": "전석",
+                "price": 0,
+                "currency": "KRW",
+                "raw_text": value,
+            }
+        ]
+
+    options = []
+    seen = set()
+    pattern = re.compile(
+        r"(?P<label>[^,;/\n\r|]*?)"
+        r"(?P<price>\d{1,3}(?:,\d{3})+|\d+)"
+        r"\s*(?:원|won|KRW)?",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(value):
+        label = _normalize_price_label(match.group("label"))
+        price = int(match.group("price").replace(",", ""))
+        raw_text = match.group(0).strip(" ,;/|")
+        key = (label, price, raw_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        options.append(
+            {
+                "label": label,
+                "price": price,
+                "currency": "KRW",
+                "raw_text": raw_text,
+            }
+        )
+
+    return options
+
+
+def _normalize_price_label(raw: str) -> str:
+    label = re.sub(r"^[\s,;/|:：·\-–—]+", "", raw or "")
+    label = re.sub(r"[\s:：·\-–—]+$", "", label)
+    label = label.strip("()[]{}")
+    label = re.sub(r"\s+", " ", label).strip()
+    return label or "전석"
 
 
 def sync_venue(raw: RawVenueDetail) -> tuple[Venue, bool]:
@@ -203,6 +254,7 @@ def sync_performance(raw: RawPerformanceDetail, client: KopisClient) -> tuple[Pe
     """
     venue = _get_or_fetch_venue(raw.mt10id, client)
     min_price, max_price, is_free, price_parse_status = parse_price_info(raw.pcseguidance)
+    price_options = parse_price_options(raw.pcseguidance)
 
     perf, created = Performance.objects.update_or_create(
         performance_id=raw.mt20id,
@@ -276,6 +328,22 @@ def sync_performance(raw: RawPerformanceDetail, client: KopisClient) -> tuple[Pe
         action, raw.prfnm, raw.mt20id,
         len(raw.styurls), len(raw.relates),
     )
+    PerformancePrice.objects.filter(performance=perf).delete()
+    if price_options:
+        PerformancePrice.objects.bulk_create(
+            [
+                PerformancePrice(
+                    performance=perf,
+                    label=option["label"],
+                    price=option["price"],
+                    currency=option["currency"],
+                    raw_text=option["raw_text"],
+                    sort_order=idx,
+                )
+                for idx, option in enumerate(price_options)
+            ]
+        )
+
     _invalidate_recommendation_vector(perf)
     return perf, created
 

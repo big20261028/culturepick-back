@@ -38,6 +38,7 @@ ALL_GENRES = [
     GenreCode.PLAY,
     GenreCode.MUSICAL,
     GenreCode.CLASSICAL,
+    GenreCode.KOREAN_MUSIC,
     GenreCode.DANCE,
     GenreCode.POPULAR_MUSIC,
 ]

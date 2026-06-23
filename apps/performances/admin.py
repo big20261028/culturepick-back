@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import BookingLink, Performance, PerformanceImage, Venue
+from .models import BookingLink, Performance, PerformanceImage, PerformancePrice, Venue
 
 
 class PerformanceImageInline(admin.TabularInline):
@@ -9,6 +9,11 @@ class PerformanceImageInline(admin.TabularInline):
 
 class BookingLinkInline(admin.TabularInline):
     model = BookingLink
+    extra = 0
+
+
+class PerformancePriceInline(admin.TabularInline):
+    model = PerformancePrice
     extra = 0
 
 
@@ -47,4 +52,11 @@ class PerformanceAdmin(admin.ModelAdmin):
     )
     list_filter = ("genre", "genre_code", "status", "status_code", "is_free", "is_child", "is_festival")
     search_fields = ("title", "cast", "facility_name", "venue__name")
-    inlines = [PerformanceImageInline, BookingLinkInline]
+    inlines = [PerformanceImageInline, BookingLinkInline, PerformancePriceInline]
+
+
+@admin.register(PerformancePrice)
+class PerformancePriceAdmin(admin.ModelAdmin):
+    list_display = ("id", "performance", "label", "price", "currency", "sort_order")
+    list_filter = ("currency", "label")
+    search_fields = ("performance__title", "performance__performance_id", "label", "raw_text")

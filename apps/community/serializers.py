@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.users.serializers import user_display_name
 
-from .models import Comment, Post, PostImage
+from .models import Comment, Post, PostImage, normalize_post_category
 
 
 ALLOWED_IMAGE_CONTENT_TYPES = {
@@ -18,6 +18,8 @@ class PostSerializer(serializers.ModelSerializer):
     author_email = serializers.EmailField(source="author.email", read_only=True)
     author_nickname = serializers.CharField(source="author.nickname", read_only=True)
     author_display_name = serializers.SerializerMethodField()
+    category = serializers.CharField(required=False)
+    category_label = serializers.CharField(source="get_category_display", read_only=True)
     comment_count = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -28,6 +30,8 @@ class PostSerializer(serializers.ModelSerializer):
             "author_email",
             "author_nickname",
             "author_display_name",
+            "category",
+            "category_label",
             "title",
             "content",
             "content_format",
@@ -43,6 +47,7 @@ class PostSerializer(serializers.ModelSerializer):
             "author_email",
             "author_nickname",
             "author_display_name",
+            "category_label",
             "view_count",
             "comment_count",
             "created_at",
@@ -51,6 +56,12 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_author_display_name(self, obj):
         return user_display_name(obj.author)
+
+    def validate_category(self, value):
+        category = normalize_post_category(value)
+        if not category:
+            raise serializers.ValidationError("Invalid category.")
+        return category
 
     def validate_title(self, value):
         value = value.strip()

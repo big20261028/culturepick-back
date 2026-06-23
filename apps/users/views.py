@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.core import signing
-from django.db.models import IntegerField, Prefetch, Value
+from django.db.models import Count, IntegerField, Prefetch, Q, Value
+from rest_framework import generics
+from rest_framework.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,6 +14,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.performances.models import Performance, UsersPerformanceAction
 from apps.performances.serializers import PerformanceListSerializer
+from apps.community.models import Post, normalize_post_category
+from apps.community.serializers import PostSerializer
 
 from .serializers import (
     LocalLoginSerializer,
@@ -191,6 +195,7 @@ class MyPerformanceActionListView(APIView):
             )
             .select_related("venue")
             .prefetch_related(
+                "price_options",
                 Prefetch(
                     "users_performance_actions",
                     queryset=user_actions,
@@ -225,6 +230,41 @@ class MyInterestPerformanceListView(MyPerformanceActionListView):
 class MyWatchlistPerformanceListView(MyPerformanceActionListView):
     action_type = UsersPerformanceAction.ActionType.WATCHLIST
     response_type = "watchlist"
+
+
+class MyCommunityPostListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PostSerializer
+
+    def get_queryset(self):
+        queryset = (
+            Post.objects.filter(author=self.request.user)
+            .select_related("author")
+            .annotate(comment_count=Count("comments"))
+            .order_by("-created_at", "-id")
+        )
+
+        category_param = (
+            self.request.query_params.get("category")
+            or self.request.query_params.get("category_slug")
+            or ""
+        )
+        category = normalize_post_category(category_param)
+        if category is None:
+            raise ValidationError({"category": "Invalid category."})
+        if category:
+            queryset = queryset.filter(category=category)
+
+        keyword = (
+            self.request.query_params.get("keyword")
+            or self.request.query_params.get("search")
+            or self.request.query_params.get("q")
+            or ""
+        ).strip()
+        if keyword:
+            queryset = queryset.filter(Q(title__icontains=keyword) | Q(content__icontains=keyword))
+
+        return queryset
 
 
 class MyProfileView(APIView):

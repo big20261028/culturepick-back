@@ -1,22 +1,70 @@
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
 from apps.performances.kopis.client import RawPerformanceDetail, RawVenueDetail
+from apps.performances.kopis.client import GenreCode
+from apps.performances.management.commands.sync_kopis import ALL_GENRES
 from apps.performances.kopis.parser import parse_performance_detail
-from apps.performances.kopis.sync import parse_price_info, sync_performance, sync_venue
+from apps.performances.kopis.sync import parse_price_info, parse_price_options, sync_performance, sync_venue
 from apps.performances.models import (
     BookingLink,
     Performance,
     PerformanceImage,
+    PerformancePrice,
     UsersPerformanceAction,
     Venue,
 )
 from apps.performances.utils.address import parse_sido_gugun
+from apps.performances.tasks import ping_task, sync_kopis_task
+from apps.performances.tasks import TARGET_GENRES
 
 User = get_user_model()
+
+
+class CeleryTaskTests(TestCase):
+    def test_celery_redis_cluster_safe_defaults_are_configured(self):
+        self.assertFalse(settings.CELERY_WORKER_ENABLE_REMOTE_CONTROL)
+        self.assertEqual(
+            settings.CELERY_BROKER_TRANSPORT_OPTIONS["global_keyprefix"],
+            "{culturepick-celery}:",
+        )
+
+    def test_ping_task_returns_pong(self):
+        result = ping_task()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["message"], "pong")
+        self.assertIn("finished_at", result)
+
+    @patch("apps.performances.tasks.call_command")
+    def test_sync_kopis_task_wraps_management_command(self, mock_call_command):
+        result = sync_kopis_task(
+            stdate="20260701",
+            eddate="20260702",
+            genre="CCCA",
+            with_venues=True,
+        )
+
+        mock_call_command.assert_called_once_with(
+            "sync_kopis",
+            stdate="20260701",
+            eddate="20260702",
+            genre="CCCA",
+            with_venues=True,
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["genre"], "CCCA")
+
+
+class KopisGenreCollectionTests(TestCase):
+    def test_default_sync_targets_include_korean_music(self):
+        self.assertIn(GenreCode.KOREAN_MUSIC, ALL_GENRES)
+        self.assertIn(GenreCode.KOREAN_MUSIC, TARGET_GENRES)
 
 
 class VenueAddressParsingTests(TestCase):
@@ -138,6 +186,14 @@ class KopisPerformanceDetailTests(TestCase):
         self.assertEqual(performance.max_price, 150000)
         self.assertFalse(performance.is_free)
         self.assertEqual(performance.price_parse_status, "parsed")
+        self.assertEqual(
+            list(
+                PerformancePrice.objects.filter(performance=performance)
+                .order_by("sort_order")
+                .values_list("label", "price")
+            ),
+            [("R석", 150000), ("S석", 100000)],
+        )
         self.assertTrue(performance.openrun)
         self.assertTrue(performance.is_child)
         self.assertTrue(performance.is_musical_license)
@@ -147,6 +203,15 @@ class KopisPerformanceDetailTests(TestCase):
     def test_parse_price_info_handles_free_and_unknown_values(self):
         self.assertEqual(parse_price_info("무료"), (0, 0, True, "free"))
         self.assertEqual(parse_price_info("가격 미정"), (None, None, False, "unparsed"))
+
+    def test_parse_price_options_splits_seat_prices(self):
+        self.assertEqual(
+            parse_price_options("R 150,000, S 100,000"),
+            [
+                {"label": "R", "price": 150000, "currency": "KRW", "raw_text": "R 150,000"},
+                {"label": "S", "price": 100000, "currency": "KRW", "raw_text": "S 100,000"},
+            ],
+        )
 
     def test_sync_venue_saves_ai_candidate_fields(self):
         raw = RawVenueDetail(
@@ -254,6 +319,13 @@ class PerformanceDetailAPITests(APITestCase):
             site_name="Ticket Site",
             url="https://tickets.example.com",
         )
+        PerformancePrice.objects.create(
+            performance=self.performance,
+            label="R",
+            price=10000,
+            raw_text="R 10000",
+            sort_order=0,
+        )
 
     def test_detail_api_returns_public_performance_data(self):
         response = self.client.get(
@@ -267,6 +339,8 @@ class PerformanceDetailAPITests(APITestCase):
         self.assertEqual(response.data["venue"]["venue_id"], self.venue.venue_id)
         self.assertEqual(response.data["venue"]["longitude"], "127.1234567")
         self.assertEqual(response.data["images"][0]["image_url"], "https://example.com/image1.jpg")
+        self.assertEqual(response.data["price_options"][0]["label"], "R")
+        self.assertEqual(response.data["price_options"][0]["price"], 10000)
         self.assertEqual(response.data["booking_links"][0]["site_name"], "Ticket Site")
         self.assertFalse(response.data["is_interested"])
         self.assertFalse(response.data["is_watchlisted"])
@@ -567,6 +641,15 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             venue=self.seoul_venue,
         )
         Performance.objects.create(
+            performance_id="PFFILTER_KOREAN_MUSIC",
+            title="Alpha Korean Music",
+            genre="\ud55c\uad6d\uc74c\uc545(\uad6d\uc545)",
+            genre_code="CCCC",
+            status="\uacf5\uc5f0\uc608\uc815",
+            start_date="2026-07-01",
+            venue=self.seoul_venue,
+        )
+        Performance.objects.create(
             performance_id="PFFILTER_REGION",
             title="Alpha Busan Musical",
             genre="\ubba4\uc9c0\uceec",
@@ -669,3 +752,18 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             [item["performance_id"] for item in response.data["searchData"]],
             ["PFFILTER_MATCH", "PFFILTER_REGION", "PFFILTER_STATUS"],
         )
+
+    def test_feature_search_supports_korean_music_alias_and_code(self):
+        for genre in ("koreanMusic", "CCCC", "cccc"):
+            with self.subTest(genre=genre):
+                response = self.client.get(
+                    reverse("performance_list"),
+                    {"genre": genre, "pageNum": 1, "pageSize": 10},
+                )
+
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data["total"], 1)
+                self.assertEqual(
+                    response.data["searchData"][0]["performance_id"],
+                    "PFFILTER_KOREAN_MUSIC",
+                )

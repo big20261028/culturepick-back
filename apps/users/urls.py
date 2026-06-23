@@ -12,4 +12,5 @@ urlpatterns = [
     path("me/password/verify/", views.MyPasswordVerificationView.as_view(), name="my_password_verify"),
     path("me/interests/", views.MyInterestPerformanceListView.as_view(), name="my_interest_performances"),
     path("me/watchlist/", views.MyWatchlistPerformanceListView.as_view(), name="my_watchlist_performances"),
+    path("me/posts/", views.MyCommunityPostListView.as_view(), name="my_community_posts"),
 ]

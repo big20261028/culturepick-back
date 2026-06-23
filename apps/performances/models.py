@@ -138,6 +138,33 @@ class PerformanceImage(models.Model):
         return f"{self.performance_id} - image {self.sort_order}"
 
 
+class PerformancePrice(models.Model):
+    performance = models.ForeignKey(
+        Performance,
+        on_delete=models.CASCADE,
+        related_name="price_options",
+        help_text="공연 FK",
+    )
+    label = models.CharField(max_length=100, help_text="좌석/권종명")
+    price = models.PositiveIntegerField(help_text="가격")
+    currency = models.CharField(max_length=10, default="KRW", help_text="통화")
+    raw_text = models.CharField(max_length=255, blank=True, help_text="파싱에 사용한 원문 조각")
+    sort_order = models.PositiveSmallIntegerField(default=0, help_text="정렬 순서")
+
+    class Meta:
+        db_table = "performance_prices"
+        ordering = ["sort_order", "id"]
+        verbose_name = "공연 가격"
+        verbose_name_plural = "공연 가격 목록"
+        indexes = [
+            models.Index(fields=["price"]),
+            models.Index(fields=["label"]),
+        ]
+
+    def __str__(self):
+        return f"{self.performance_id} - {self.label} {self.price}{self.currency}"
+
+
 class BookingLink(models.Model):
     """예매 링크 - KOPIS relates (다중 예매처)"""
 

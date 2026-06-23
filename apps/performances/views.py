@@ -127,7 +127,7 @@ class PerformanceListView(ListAPIView):
         return response
 
     def get_queryset(self):
-        queryset = Performance.objects.select_related("venue")
+        queryset = Performance.objects.select_related("venue").prefetch_related("price_options")
         queryset = _prefetch_current_user_actions(queryset, self.request.user)
         keyword = self.request.query_params.get("keyword", "").strip()
         has_feature_filters = any(
@@ -262,7 +262,7 @@ class PerformanceDetailView(RetrieveAPIView):
 
     queryset = (
         Performance.objects.select_related("venue")
-        .prefetch_related("images", "booking_links")
+        .prefetch_related("images", "booking_links", "price_options")
     )
 
     def get_queryset(self):
