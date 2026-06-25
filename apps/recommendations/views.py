@@ -57,6 +57,7 @@ class AIRecommendationView(APIView):
             message=serializer.validated_data["message"],
             limit=serializer.validated_data["limit"],
             candidate_limit=serializer.validated_data["candidate_limit"],
+            previous_session_id=serializer.validated_data.get("session_id"),
         )
         items = session.items.select_related("performance__venue").all()
         result_serializer = RecommendationItemSerializer(
@@ -82,6 +83,7 @@ class AIRecommendationView(APIView):
             "message": session.parsed_response.get("summary", ""),
             "fallback_used": session.fallback_used,
             "validation_status": session.validation_status,
+            "constraint_notes": session.user_profile_snapshot.get("constraint_notes", []),
             "recommendations": recommendations,
             "results": result_serializer.data,
         }

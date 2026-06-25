@@ -117,6 +117,7 @@ class CommentSerializer(serializers.ModelSerializer):
 
 class PostImageUploadSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField(read_only=True)
+    url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PostImage
@@ -124,6 +125,7 @@ class PostImageUploadSerializer(serializers.ModelSerializer):
             "id",
             "image",
             "image_url",
+            "url",
             "original_name",
             "size",
             "content_type",
@@ -132,6 +134,7 @@ class PostImageUploadSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "image_url",
+            "url",
             "original_name",
             "size",
             "content_type",
@@ -162,3 +165,6 @@ class PostImageUploadSerializer(serializers.ModelSerializer):
         if request and url.startswith("/"):
             return request.build_absolute_uri(url)
         return url
+
+    def get_url(self, obj):
+        return self.get_image_url(obj)

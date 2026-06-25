@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.performances.models import Performance
@@ -10,7 +11,13 @@ class AIRecommendationRequestSerializer(serializers.Serializer):
     message = serializers.CharField(required=False, allow_blank=True, default="")
     prompt = serializers.CharField(required=False, allow_blank=True, write_only=True)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=10, default=5)
-    candidate_limit = serializers.IntegerField(required=False, min_value=5, max_value=50, default=30)
+    candidate_limit = serializers.IntegerField(
+        required=False,
+        min_value=3,
+        max_value=20,
+        default=getattr(settings, "AI_RECOMMENDATION_CANDIDATE_LIMIT_DEFAULT", 12),
+    )
+    session_id = serializers.IntegerField(required=False, allow_null=True)
     include_candidates = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):

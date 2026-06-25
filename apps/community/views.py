@@ -1,3 +1,5 @@
+import logging
+
 from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
@@ -10,6 +12,9 @@ from rest_framework.views import APIView
 from .models import Comment, Post, normalize_post_category
 from .permissions import IsAuthorOrReadOnly
 from .serializers import CommentSerializer, PostImageUploadSerializer, PostSerializer
+
+
+logger = logging.getLogger(__name__)
 
 
 class PostListCreateView(generics.ListCreateAPIView):
@@ -111,9 +116,18 @@ class PostImageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        serializer = PostImageUploadSerializer(data=request.data, context={"request": request})
+        data = request.data
+        if "image" not in request.FILES and "image" not in request.data:
+            uploaded_file = request.FILES.get("file") or request.data.get("file")
+            if uploaded_file is not None:
+                data = {key: request.data.get(key) for key in request.data.keys()}
+                data["image"] = uploaded_file
+
+        logger.info("community image upload requested: file_keys=%s", list(request.FILES.keys()))
+        serializer = PostImageUploadSerializer(data=data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         image = serializer.save()
+        logger.info("community image uploaded: id=%s name=%s url=%s", image.pk, image.image.name, image.image.url)
         return Response(
             PostImageUploadSerializer(image, context={"request": request}).data,
             status=status.HTTP_201_CREATED,

@@ -206,13 +206,16 @@ if isinstance(CELERY_RESULT_BACKEND, str) and CELERY_RESULT_BACKEND.startswith("
 from celery.schedules import crontab
 
 CELERY_ENABLE_KOPIS_BEAT_SCHEDULE = env.bool("CELERY_ENABLE_KOPIS_BEAT_SCHEDULE", default=False)
+KOPIS_ONGOING_SYNC_DAYS = env.int("KOPIS_ONGOING_SYNC_DAYS", default=30)
+KOPIS_UPCOMING_SYNC_DAYS = env.int("KOPIS_UPCOMING_SYNC_DAYS", default=60)
+KOPIS_SYNC_LOCK_TTL_SECONDS = env.int("KOPIS_SYNC_LOCK_TTL_SECONDS", default=7200)
 CELERY_BEAT_SCHEDULE = {}
 
 if CELERY_ENABLE_KOPIS_BEAT_SCHEDULE:
     CELERY_BEAT_SCHEDULE = {
         "sync-ongoing-performances": {
             "task": "apps.performances.tasks.sync_ongoing_performances",
-            "schedule": crontab(hour=4, minute=0),
+            "schedule": crontab(hour=4, minute=10),
         },
         "sync-upcoming-performances": {
             "task": "apps.performances.tasks.sync_upcoming_performances",
@@ -223,9 +226,17 @@ if CELERY_ENABLE_KOPIS_BEAT_SCHEDULE:
 # ── KOPIS API ─────────────────────────────────────────────────────────
 KOPIS_API_KEY = env("KOPIS_API_KEY", default="")
 
-# OpenAI recommendation API
+# AI recommendation API
+AI_RECOMMENDATION_PROVIDER = env("AI_RECOMMENDATION_PROVIDER", default="openai")
+AI_RECOMMENDATION_MAX_OUTPUT_TOKENS = env.int("AI_RECOMMENDATION_MAX_OUTPUT_TOKENS", default=1200)
+AI_RECOMMENDATION_TEMPERATURE = env.float("AI_RECOMMENDATION_TEMPERATURE", default=0.35)
+AI_RECOMMENDATION_CANDIDATE_LIMIT_DEFAULT = env.int("AI_RECOMMENDATION_CANDIDATE_LIMIT_DEFAULT", default=12)
+AI_RECOMMENDATION_DEMO_INTENT_ENABLED = env.bool("AI_RECOMMENDATION_DEMO_INTENT_ENABLED", default=True)
 OPENAI_API_SECRET_KEY = env("OPENAI_API_SECRET_KEY", default=env("OPENAI_API_KEY", default=""))
 OPENAI_RECOMMENDATION_MODEL = env("OPENAI_RECOMMENDATION_MODEL", default="gpt-4o-mini")
+GMS_API_KEY = env("GMS_API_KEY", default=env("GMS_KEY", default=""))
+GMS_OPENAI_BASE_URL = env("GMS_OPENAI_BASE_URL", default="https://gms.ssafy.io/gmsapi/api.openai.com/v1")
+GMS_RECOMMENDATION_MODEL = env("GMS_RECOMMENDATION_MODEL", default="gpt-4.1")
 
 # ── 로깅 ──────────────────────────────────────────────────────────────
 LOGGING = {

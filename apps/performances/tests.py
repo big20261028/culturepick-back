@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.conf import settings
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework import status
@@ -20,7 +21,7 @@ from apps.performances.models import (
     Venue,
 )
 from apps.performances.utils.address import parse_sido_gugun
-from apps.performances.tasks import ping_task, sync_kopis_task
+from apps.performances.tasks import ping_task, sync_kopis_task, sync_ongoing_performances, sync_upcoming_performances
 from apps.performances.tasks import TARGET_GENRES
 
 User = get_user_model()
@@ -59,6 +60,98 @@ class CeleryTaskTests(TestCase):
         )
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["genre"], "CCCA")
+
+    @patch("apps.performances.tasks._release_task_lock")
+    @patch("apps.performances.tasks.sync_performances_in_range")
+    @patch("apps.performances.tasks._date_range", return_value=("20260624", "20260724"))
+    @patch("apps.performances.tasks._acquire_task_lock", return_value=(True, "lock-key", "token"))
+    def test_sync_ongoing_uses_30_day_range_and_lock(
+        self,
+        mock_acquire,
+        mock_date_range,
+        mock_sync,
+        mock_release,
+    ):
+        from apps.performances.kopis.sync import SyncResult
+
+        mock_sync.return_value = SyncResult(created=1)
+
+        result = sync_ongoing_performances()
+
+        mock_acquire.assert_called_once_with("sync_ongoing_performances")
+        mock_date_range.assert_called_once_with(days_before=0, days_after=30)
+        self.assertEqual(mock_sync.call_count, len(TARGET_GENRES))
+        mock_release.assert_called_once_with("sync_ongoing_performances", "lock-key", "token")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["days_after"], 30)
+
+    @patch("apps.performances.tasks._release_task_lock")
+    @patch("apps.performances.tasks.sync_performances_in_range")
+    @patch("apps.performances.tasks._date_range", return_value=("20260624", "20260823"))
+    @patch("apps.performances.tasks._acquire_task_lock", return_value=(True, "lock-key", "token"))
+    def test_sync_upcoming_uses_60_day_range_and_lock(
+        self,
+        mock_acquire,
+        mock_date_range,
+        mock_sync,
+        mock_release,
+    ):
+        from apps.performances.kopis.sync import SyncResult
+
+        mock_sync.return_value = SyncResult(updated=1)
+
+        result = sync_upcoming_performances()
+
+        mock_acquire.assert_called_once_with("sync_upcoming_performances")
+        mock_date_range.assert_called_once_with(days_before=0, days_after=60)
+        self.assertEqual(mock_sync.call_count, len(TARGET_GENRES))
+        mock_release.assert_called_once_with("sync_upcoming_performances", "lock-key", "token")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["days_after"], 60)
+
+    @patch("apps.performances.tasks.sync_performances_in_range")
+    @patch("apps.performances.tasks._acquire_task_lock", return_value=(False, "lock-key", ""))
+    def test_scheduled_sync_skips_when_lock_exists(self, mock_acquire, mock_sync):
+        result = sync_ongoing_performances()
+
+        mock_acquire.assert_called_once_with("sync_ongoing_performances")
+        mock_sync.assert_not_called()
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "already_running")
+
+
+class CeleryBeatScheduleCommandTests(TestCase):
+    def test_setup_celery_beat_schedule_registers_kopis_tasks_only(self):
+        from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+        cleanup_schedule = CrontabSchedule.objects.create(
+            minute="0",
+            hour="4",
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone=settings.TIME_ZONE,
+        )
+        PeriodicTask.objects.create(
+            name="celery.backend_cleanup",
+            task="celery.backend_cleanup",
+            crontab=cleanup_schedule,
+            enabled=True,
+        )
+
+        call_command("setup_celery_beat_schedule")
+
+        ongoing = PeriodicTask.objects.get(name="daily-sync-ongoing-performances")
+        upcoming = PeriodicTask.objects.get(name="daily-sync-upcoming-performances")
+        cleanup = PeriodicTask.objects.get(name="celery.backend_cleanup")
+
+        self.assertEqual(ongoing.task, "apps.performances.tasks.sync_ongoing_performances")
+        self.assertEqual(ongoing.crontab.hour, "4")
+        self.assertEqual(ongoing.crontab.minute, "10")
+        self.assertEqual(upcoming.task, "apps.performances.tasks.sync_upcoming_performances")
+        self.assertEqual(upcoming.crontab.hour, "4")
+        self.assertEqual(upcoming.crontab.minute, "30")
+        self.assertEqual(cleanup.task, "celery.backend_cleanup")
 
 
 class KopisGenreCollectionTests(TestCase):

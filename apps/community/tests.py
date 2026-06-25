@@ -319,8 +319,22 @@ class CommunityImageUploadAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("/media/community/images/", response.data["image_url"])
+        self.assertEqual(response.data["url"], response.data["image_url"])
         self.assertEqual(PostImage.objects.count(), 1)
         self.assertEqual(PostImage.objects.first().uploader, self.user)
+
+    def test_image_upload_accepts_file_field_alias(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse("community_image_upload"),
+            {"file": self._gif_file()},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("/media/community/images/", response.data["url"])
+        self.assertEqual(PostImage.objects.count(), 1)
 
     def test_image_upload_rejects_invalid_content_type(self):
         self.client.force_authenticate(user=self.user)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 from math import log1p
 
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
@@ -19,7 +21,17 @@ from .models import (
     TrainingExampleCandidate,
     UserPreferenceProfile,
 )
-from .openai_client import OpenAIRecommendationError, request_openai_recommendations
+from .openai_client import (
+    OpenAIRecommendationError,
+    get_recommendation_provider_name,
+    request_openai_recommendations,
+)
+from .demo_intent import (
+    apply_demo_queryset,
+    build_demo_request_vector,
+    demo_intent_score_contributions,
+    extract_demo_intent,
+)
 
 
 PROMPT_VERSION = "recommendation-v1"
@@ -89,6 +101,8 @@ REQUEST_GENRE_TERMS = {
     "EEEB": ["복합", "복합장르", "complex"],
 }
 
+AI_RECOMMENDATION_PROVIDERS = {"openai", "gms"}
+
 REQUEST_REGION_TERMS = {
     "서울": ["서울", "seoul"],
     "경기": ["경기", "경기도", "gyeonggi"],
@@ -121,6 +135,36 @@ REQUEST_FEATURE_TERMS = {
     "festival": ["축제", "페스티벌", "festival"],
     "openrun": ["오픈런", "openrun", "open run"],
 }
+
+REQUEST_INTENT_TERMS = {
+    "family": ["가족", "아이", "아이와", "어린이", "초등", "family", "kid", "children"],
+    "date": ["데이트", "커플", "연인", "둘이", "여자친구", "남자친구", "date", "couple"],
+    "romantic": ["로맨틱", "낭만", "사랑", "연애", "감성", "멜로", "romantic"],
+    "healing": ["힐링", "잔잔", "따뜻", "감동", "위로", "편안", "여유", "healing"],
+    "light": ["가볍", "심심", "부담없이", "기분전환", "웃긴", "유쾌", "재밌", "comedy"],
+    "exciting": ["신나", "화려", "강렬", "에너지", "댄스", "밴드", "콘서트", "exciting"],
+    "beginner": ["입문", "처음", "초보", "쉽게", "대중적", "무난"],
+    "parent": ["부모님", "어머니", "아버지", "어르신", "중장년"],
+    "solo": ["혼자", "혼공", "나홀로", "solo"],
+    "friend": ["친구", "동료", "모임", "friend"],
+    "parking": ["주차", "차로", "자동차", "parking"],
+    "short_runtime": ["짧은", "짧게", "퇴근 후", "평일 저녁", "가볍게"],
+    "weekend": ["주말", "토요일", "일요일", "토", "일", "weekend"],
+    "afternoon": ["오후", "낮", "점심", "afternoon"],
+    "evening": ["저녁", "밤", "퇴근", "evening", "night"],
+    "accessibility": ["장애", "장애인", "휠체어", "접근성", "배리어프리", "barrier free", "barrier-free", "accessible"],
+    "hearing_accessibility": ["청각장애", "청각 장애", "자막", "수어", "수화", "문자통역", "hearing"],
+    "visual_accessibility": ["시각장애", "시각 장애", "화면해설", "음성해설", "audio description", "visual"],
+}
+
+REQUEST_INTENT_VECTOR_FEATURES = {
+    "family": "child",
+}
+
+REQUEST_EXCLUDE_PREVIOUS_TERMS = ["다른", "말고", "빼고", "제외", "이전", "아까", "방금", "다시", "재추천"]
+
+PRICE_UNDER_TERMS = ("이하", "미만", "아래", "안쪽", "내", "까지", "보다 싼", "보다 저렴")
+PRICE_OVER_TERMS = ("이상", "초과", "넘는", "넘게", "부터")
 
 
 @dataclass(frozen=True)
@@ -228,6 +272,23 @@ def _normalize_scores(scores) -> dict[str, float]:
     }
 
 
+def _merge_into_scores(target: dict[str, float], extra: dict[str, float]):
+    for key, value in (extra or {}).items():
+        target[key] = round(target.get(key, 0) + value, 4)
+
+
+def _unique_preserve_order(values: list[str]) -> list[str]:
+    result = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _demo_intent_enabled() -> bool:
+    return bool(getattr(settings, "AI_RECOMMENDATION_DEMO_INTENT_ENABLED", True))
+
+
 def get_or_build_performance_vector(performance: Performance) -> PerformanceVector:
     vector, _ = PerformanceVector.objects.get_or_create(performance=performance)
     if _performance_vector_is_current(vector, performance):
@@ -316,23 +377,46 @@ def build_performance_source_summary(performance: Performance) -> dict:
     }
 
 
-def get_recommendation_candidates(user=None, message="", limit=30, pool_size=500) -> tuple[dict, list[Candidate]]:
+def get_recommendation_candidates(
+    user=None,
+    message="",
+    limit=30,
+    pool_size=250,
+    exclude_performance_ids=None,
+) -> tuple[dict, list[Candidate]]:
     profile = get_or_build_user_profile(user)
     user_vector = profile.vector_data if profile else {}
+    request_intent = extract_request_intent(message)
     request_vector = build_request_vector(message)
+    if _demo_intent_enabled():
+        demo_intent = extract_demo_intent(message)
+        if demo_intent:
+            request_intent["demo"] = demo_intent
+            request_intent["features"] = _unique_preserve_order(
+                (request_intent.get("features") or []) + (demo_intent.get("features") or [])
+            )
+            _merge_into_scores(request_vector, build_demo_request_vector(demo_intent))
     combined_vector = _merge_preference_vectors(user_vector, request_vector)
     profile_snapshot = {
         "vector_data": combined_vector,
         "user_vector_data": user_vector,
         "request_vector_data": request_vector,
+        "request_intent": request_intent,
         "source_summary": profile.source_summary if profile else {},
         "is_personalized": bool(user_vector),
         "has_request_signal": bool(request_vector),
     }
 
-    queryset = _candidate_queryset(user, combined_vector, pool_size)
-    candidates = [_score_candidate(performance, combined_vector) for performance in queryset]
+    queryset = _candidate_queryset(
+        user,
+        combined_vector,
+        pool_size,
+        exclude_performance_ids=exclude_performance_ids,
+        request_intent=request_intent,
+    )
+    candidates = [_score_candidate(performance, combined_vector, request_intent) for performance in queryset]
     candidates.sort(key=lambda candidate: candidate.score, reverse=True)
+    profile_snapshot["constraint_notes"] = _constraint_notes(candidates, request_intent)
     return profile_snapshot, candidates[:limit]
 
 
@@ -343,6 +427,11 @@ def build_request_vector(message: str) -> dict[str, float]:
 
     for genre_code, terms in REQUEST_GENRE_TERMS.items():
         if _contains_any(message, terms):
+            if genre_code == "CCCD" and not _contains_any(
+                message,
+                ["콘서트", "대중음악", "밴드", "재즈", "락", "록", "concert", "band", "jazz"],
+            ):
+                continue
             normalized_code = _normalize_token(genre_code)
             scores[f"genre:{normalized_code}"] += 1.0
             for alias in GENRE_ALIASES.get(genre_code, []):
@@ -362,16 +451,62 @@ def build_request_vector(message: str) -> dict[str, float]:
         if _contains_any(message, terms):
             scores[f"feature:{feature}"] += 1.0
 
+    request_intent = extract_request_intent(message)
+    for feature in request_intent.get("features", []):
+        vector_feature = REQUEST_INTENT_VECTOR_FEATURES.get(feature, feature)
+        scores[f"feature:{vector_feature}"] += 0.85
+
+    price_intent = request_intent.get("price") or {}
+    if price_intent.get("is_free"):
+        scores["price:free"] += 1.2
+    elif price_intent.get("max_price"):
+        max_price = price_intent["max_price"]
+        if max_price <= 30000:
+            scores["price:low"] += 1.0
+        elif max_price <= 100000:
+            scores["price:mid"] += 1.0
+            scores["price:low"] += 0.65
+        else:
+            scores["price:high"] += 0.5
+            scores["price:mid"] += 0.4
+    elif price_intent.get("min_price"):
+        scores["price:high"] += 0.7
+
     for token in _text_tokens(message, limit=8):
         scores[f"keyword:{token}"] += 0.3
 
     return _normalize_scores(scores)
 
 
-def _candidate_queryset(user, user_vector: dict[str, float], pool_size: int):
+def extract_request_intent(message: str) -> dict:
+    text = (message or "").strip()
+    if not text:
+        return {}
+
+    features = [
+        name
+        for name, terms in REQUEST_INTENT_TERMS.items()
+        if _contains_any(text, terms)
+    ]
+    price_intent = _extract_price_intent(text)
+    runtime_intent = _extract_runtime_intent(text)
+    schedule_intent = _extract_schedule_intent(text)
+    accessibility_intent = _extract_accessibility_intent(text)
+    return {
+        "features": features,
+        "price": price_intent,
+        "runtime": runtime_intent,
+        "schedule": schedule_intent,
+        "accessibility": accessibility_intent,
+        "raw_terms": _text_tokens(text, limit=12),
+    }
+
+
+def _candidate_queryset(user, user_vector: dict[str, float], pool_size: int, exclude_performance_ids=None, request_intent=None):
     today = timezone.localdate()
     queryset = (
         Performance.objects.select_related("venue")
+        .prefetch_related("price_options")
         .filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
         .order_by("-zzim_count", "-view_count", "start_date", "title")
     )
@@ -379,6 +514,14 @@ def _candidate_queryset(user, user_vector: dict[str, float], pool_size: int):
     if user and user.is_authenticated:
         selected_ids = UsersPerformanceAction.objects.filter(user=user).values_list("performance_id", flat=True)
         queryset = queryset.exclude(performance_id__in=selected_ids)
+
+    if exclude_performance_ids:
+        queryset = queryset.exclude(performance_id__in=exclude_performance_ids)
+
+    if _demo_intent_enabled():
+        demo_preferred = apply_demo_queryset(queryset, (request_intent or {}).get("demo") or {}, pool_size)
+        if demo_preferred is not None:
+            return demo_preferred
 
     preference_filter = _build_preference_filter(user_vector)
     if preference_filter:
@@ -417,7 +560,7 @@ def _merge_preference_vectors(user_vector: dict[str, float], request_vector: dic
     }
 
 
-def _score_candidate(performance: Performance, user_vector: dict[str, float]) -> Candidate:
+def _score_candidate(performance: Performance, user_vector: dict[str, float], request_intent=None) -> Candidate:
     performance_vector = get_or_build_performance_vector(performance).vector_data
     contributions = []
     score = 0.0
@@ -437,6 +580,18 @@ def _score_candidate(performance: Performance, user_vector: dict[str, float]) ->
             "reason": _reason_for_key(key),
         })
 
+    for intent_contribution in _intent_score_contributions(performance, request_intent or {}):
+        score += intent_contribution["score"]
+        contributions.append(intent_contribution)
+
+    if _demo_intent_enabled():
+        for intent_contribution in demo_intent_score_contributions(
+            performance,
+            (request_intent or {}).get("demo") or {},
+        ):
+            score += intent_contribution["score"]
+            contributions.append(intent_contribution)
+
     score += _availability_bonus(performance)
     score += _popularity_bonus(performance)
     contributions.sort(key=lambda item: item["score"], reverse=True)
@@ -452,18 +607,28 @@ def _score_candidate(performance: Performance, user_vector: dict[str, float]) ->
     )
 
 
-def create_ai_recommendation(user, message="", limit=5, candidate_limit=30) -> RecommendationSession:
+def create_ai_recommendation(user, message="", limit=5, candidate_limit=12, previous_session_id=None) -> RecommendationSession:
+    try:
+        provider = get_recommendation_provider_name()
+    except OpenAIRecommendationError:
+        provider = "openai"
+
+    conversation_context = _previous_recommendation_context(user, previous_session_id)
+    exclude_ids = _previous_recommendation_ids(conversation_context) if _should_exclude_previous(message) else []
     profile_snapshot, candidates = get_recommendation_candidates(
         user=user,
         message=message,
         limit=max(candidate_limit, limit),
+        exclude_performance_ids=exclude_ids,
     )
+    if conversation_context:
+        profile_snapshot["conversation_context"] = conversation_context
     candidate_snapshot = [_candidate_payload(candidate) for candidate in candidates]
 
     session = RecommendationSession.objects.create(
         user=user if user and user.is_authenticated else None,
         request_text=message or "",
-        provider="openai",
+        provider=provider,
         model_name="",
         prompt_version=PROMPT_VERSION,
         user_profile_snapshot=profile_snapshot,
@@ -499,11 +664,11 @@ def create_ai_recommendation(user, message="", limit=5, candidate_limit=30) -> R
         session.raw_response = {"error": str(exc)}
         session.validation_status = RecommendationSession.ValidationStatus.FAILED
 
-    fallback_items = _fallback_items(candidates, limit)
+    fallback_items = _fallback_items(candidates, limit, profile_snapshot)
     session.provider = "rule_based"
     session.fallback_used = True
     session.parsed_response = {
-        "summary": "추천 후보를 기준으로 공연을 골랐습니다.",
+        "summary": _fallback_summary(profile_snapshot),
         "recommendations": [
             {
                 "performance_id": item["performance"].performance_id,
@@ -549,7 +714,7 @@ def refresh_session_quality(session: RecommendationSession) -> RecommendationSes
 def sync_training_candidate(session: RecommendationSession, feedback_types=None):
     feedback_types = feedback_types if feedback_types is not None else list(session.feedback.values_list("feedback_type", flat=True))
     if (
-        session.provider != "openai"
+        not _is_ai_recommendation_provider(session.provider)
         or session.fallback_used
         or session.validation_status != RecommendationSession.ValidationStatus.PASSED
     ):
@@ -585,8 +750,8 @@ def classify_training_candidate(session: RecommendationSession, feedback_types: 
     has_positive_feedback = any(feedback_type in POSITIVE_FEEDBACK_TYPES for feedback_type in feedback_types)
     has_blocking_negative = any(feedback_type in BLOCKING_NEGATIVE_TYPES for feedback_type in feedback_types)
 
-    if session.provider != "openai":
-        rejection_reasons.append("provider_not_openai")
+    if not _is_ai_recommendation_provider(session.provider):
+        rejection_reasons.append("provider_not_ai")
     if session.fallback_used:
         rejection_reasons.append("fallback_used")
     if session.validation_status != RecommendationSession.ValidationStatus.PASSED:
@@ -631,6 +796,50 @@ def _has_training_payload(session: RecommendationSession) -> bool:
     return bool(session.candidate_snapshot or session.parsed_response)
 
 
+def _is_ai_recommendation_provider(provider: str) -> bool:
+    return provider in AI_RECOMMENDATION_PROVIDERS
+
+
+def _previous_recommendation_context(user, previous_session_id) -> dict:
+    if not previous_session_id or not user or not getattr(user, "is_authenticated", False):
+        return {}
+
+    session = (
+        RecommendationSession.objects.filter(pk=previous_session_id, user=user)
+        .prefetch_related("items__performance")
+        .first()
+    )
+    if not session:
+        return {}
+
+    return {
+        "session_id": session.id,
+        "request_text": session.request_text,
+        "summary": session.parsed_response.get("summary", ""),
+        "recommendations": [
+            {
+                "performance_id": item.performance_id,
+                "title": item.performance.title,
+                "rank": item.rank,
+                "reason": item.reason,
+            }
+            for item in session.items.all()[:10]
+        ],
+    }
+
+
+def _previous_recommendation_ids(conversation_context: dict) -> list[str]:
+    return [
+        item.get("performance_id")
+        for item in conversation_context.get("recommendations", [])
+        if item.get("performance_id")
+    ]
+
+
+def _should_exclude_previous(message: str) -> bool:
+    return _contains_any(message or "", REQUEST_EXCLUDE_PREVIOUS_TERMS)
+
+
 def _validate_openai_items(parsed: dict, candidates: list[Candidate], limit: int) -> list[dict]:
     candidate_map = {candidate.performance.performance_id: candidate for candidate in candidates}
     valid_items = []
@@ -655,16 +864,36 @@ def _validate_openai_items(parsed: dict, candidates: list[Candidate], limit: int
     return valid_items
 
 
-def _fallback_items(candidates: list[Candidate], limit: int) -> list[dict]:
+def _fallback_summary(profile_snapshot: dict) -> str:
+    notes = profile_snapshot.get("constraint_notes") or []
+    if notes:
+        return " ".join(notes)
+    return "추천 후보를 기준으로 공연을 골랐습니다."
+
+
+def _fallback_items(candidates: list[Candidate], limit: int, profile_snapshot: dict | None = None) -> list[dict]:
+    constraint_prefix = _fallback_constraint_prefix(profile_snapshot or {})
     return [
         {
             "performance": candidate.performance,
             "rank": index + 1,
             "score": candidate.score,
-            "reason": candidate.reasons[0] if candidate.reasons else "추천 후보 점수가 높습니다.",
+            "reason": _fallback_reason(candidate, constraint_prefix),
         }
         for index, candidate in enumerate(candidates[:limit])
     ]
+
+
+def _fallback_constraint_prefix(profile_snapshot: dict) -> str:
+    notes = profile_snapshot.get("constraint_notes") or []
+    return " ".join(note for note in notes if note)
+
+
+def _fallback_reason(candidate: Candidate, constraint_prefix: str = "") -> str:
+    reason = candidate.reasons[0] if candidate.reasons else "추천 후보 점수가 높습니다."
+    if constraint_prefix and constraint_prefix not in reason:
+        return f"{constraint_prefix} {reason}"
+    return reason
 
 
 def _save_recommendation_items(session, items: list[dict], source: str):
@@ -681,29 +910,470 @@ def _save_recommendation_items(session, items: list[dict], source: str):
     ])
 
 
+def _extract_price_intent(message: str) -> dict:
+    text = message or ""
+    normalized = text.replace(",", "").replace(" ", "")
+    if _contains_any(text, ["무료", "공짜", "free"]):
+        return {"is_free": True, "max_price": 0, "label": "무료"}
+
+    price_intent = {}
+    for match in re.finditer(r"(\d+(?:\.\d+)?)\s*만\s*원?\s*([가-힣\s]*)", text):
+        amount = int(float(match.group(1)) * 10000)
+        qualifier = (match.group(2) or "")[:8]
+        _apply_price_qualifier(price_intent, amount, qualifier)
+
+    for match in re.finditer(r"(\d{2,9})원?\s*([가-힣\s]*)", normalized):
+        amount = int(match.group(1))
+        if amount < 1000:
+            continue
+        qualifier = (match.group(2) or "")[:8]
+        _apply_price_qualifier(price_intent, amount, qualifier)
+
+    if not price_intent:
+        return {}
+    if "label" not in price_intent:
+        if price_intent.get("max_price") is not None:
+            price_intent["label"] = f"{price_intent['max_price']}원 이하"
+        elif price_intent.get("min_price") is not None:
+            price_intent["label"] = f"{price_intent['min_price']}원 이상"
+    return price_intent
+
+
+def _apply_price_qualifier(price_intent: dict, amount: int, qualifier: str):
+    if any(term in qualifier for term in PRICE_OVER_TERMS):
+        current = price_intent.get("min_price")
+        price_intent["min_price"] = amount if current is None else max(current, amount)
+        return
+
+    current = price_intent.get("max_price")
+    price_intent["max_price"] = amount if current is None else min(current, amount)
+
+
+def _extract_runtime_intent(message: str) -> dict:
+    text = message or ""
+    runtime_intent = {}
+    for match in re.finditer(r"(\d+(?:\.\d+)?)\s*시간\s*([가-힣\s]*)", text):
+        minutes = int(float(match.group(1)) * 60)
+        qualifier = (match.group(2) or "")[:8]
+        _apply_runtime_qualifier(runtime_intent, minutes, qualifier)
+    for match in re.finditer(r"(\d{2,3})\s*분\s*([가-힣\s]*)", text):
+        minutes = int(match.group(1))
+        qualifier = (match.group(2) or "")[:8]
+        _apply_runtime_qualifier(runtime_intent, minutes, qualifier)
+    if not runtime_intent and _contains_any(text, ["짧은", "짧게", "가볍게", "퇴근 후"]):
+        runtime_intent["max_minutes"] = 100
+        runtime_intent["label"] = "짧은 러닝타임"
+    return runtime_intent
+
+
+def _apply_runtime_qualifier(runtime_intent: dict, minutes: int, qualifier: str):
+    if any(term in qualifier for term in PRICE_OVER_TERMS):
+        current = runtime_intent.get("min_minutes")
+        runtime_intent["min_minutes"] = minutes if current is None else max(current, minutes)
+        return
+    current = runtime_intent.get("max_minutes")
+    runtime_intent["max_minutes"] = minutes if current is None else min(current, minutes)
+    runtime_intent["label"] = f"{minutes}분 이하"
+
+
+def _extract_schedule_intent(message: str) -> dict:
+    text = message or ""
+    schedule = {}
+    if _contains_any(text, ["주말", "토요일", "일요일", "토", "일", "weekend"]):
+        schedule["days"] = ["토", "일"]
+    if _contains_any(text, ["평일", "월요일", "화요일", "수요일", "목요일", "금요일"]):
+        schedule["days"] = ["월", "화", "수", "목", "금"]
+    if _contains_any(text, ["오후", "낮", "점심", "afternoon"]):
+        schedule["time_of_day"] = "afternoon"
+    elif _contains_any(text, ["저녁", "밤", "퇴근", "evening", "night"]):
+        schedule["time_of_day"] = "evening"
+    elif _contains_any(text, ["오전", "아침", "morning"]):
+        schedule["time_of_day"] = "morning"
+    return schedule
+
+
+def _extract_accessibility_intent(message: str) -> dict:
+    text = message or ""
+    needs = []
+    if _contains_any(text, ["휠체어", "이동약자", "무장애", "접근성", "배리어프리", "barrier free", "barrier-free", "accessible"]):
+        needs.append("mobility")
+    if _contains_any(text, ["청각장애", "청각 장애", "자막", "수어", "수화", "문자통역", "hearing"]):
+        needs.append("hearing")
+    if _contains_any(text, ["시각장애", "시각 장애", "화면해설", "음성해설", "audio description", "visual"]):
+        needs.append("visual")
+    return {
+        "needs": needs,
+        "data_available": False,
+    } if needs else {}
+
+
+def _intent_score_contributions(performance: Performance, request_intent: dict) -> list[dict]:
+    contributions = []
+    price_contribution = _price_intent_contribution(performance, request_intent.get("price") or {})
+    if price_contribution:
+        contributions.append(price_contribution)
+
+    runtime_contribution = _runtime_intent_contribution(performance, request_intent.get("runtime") or {})
+    if runtime_contribution:
+        contributions.append(runtime_contribution)
+
+    schedule_contribution = _schedule_intent_contribution(performance, request_intent.get("schedule") or {})
+    if schedule_contribution:
+        contributions.append(schedule_contribution)
+
+    for accessibility_contribution in _accessibility_intent_contributions(performance, request_intent.get("accessibility") or {}):
+        contributions.append(accessibility_contribution)
+
+    features = request_intent.get("features") or []
+    for feature in features:
+        contribution = _feature_intent_contribution(performance, feature)
+        if contribution:
+            contributions.append(contribution)
+    return contributions
+
+
+def _price_intent_contribution(performance: Performance, price_intent: dict) -> dict | None:
+    if not price_intent:
+        return None
+
+    if price_intent.get("is_free"):
+        if performance.is_free:
+            return _contribution("intent:price:free", 3.0, "무료 공연 조건에 맞습니다.")
+        return _contribution("intent:price:free", -2.0, "무료 조건과는 맞지 않습니다.")
+
+    max_price = price_intent.get("max_price")
+    min_price = price_intent.get("min_price")
+    perf_min = performance.min_price
+    perf_max = performance.max_price
+
+    if max_price is not None:
+        if performance.is_free:
+            return _contribution("intent:price:max", 2.8, f"무료 공연이라 {max_price:,}원 이하 예산에 충분히 맞습니다.")
+        if perf_max is not None and perf_max <= max_price:
+            return _contribution("intent:price:max", 2.5, f"전 좌석 가격이 {max_price:,}원 이하 조건에 맞습니다.")
+        if perf_min is not None and perf_min <= max_price:
+            return _contribution("intent:price:max", 1.3, f"일부 좌석이 {max_price:,}원 이하 예산에 들어옵니다.")
+        if perf_min is not None and perf_min > max_price:
+            gap_score = max(0.2, 1.0 - ((perf_min - max_price) / 50000))
+            if gap_score <= 0.25:
+                gap_score = -1.6
+            return _contribution("intent:price:max", gap_score, f"요청 예산을 넘지만 후보 중 가격이 낮은 편인지 함께 비교했습니다. 최저가는 {perf_min:,}원입니다.")
+        return _contribution("intent:price:max", -0.4, "가격 정보가 부족해 예산 조건은 약하게만 반영했습니다.")
+
+    if min_price is not None:
+        if perf_max is not None and perf_max >= min_price:
+            return _contribution("intent:price:min", 0.8, f"{min_price:,}원 이상 가격대의 좌석을 포함합니다.")
+        return _contribution("intent:price:min", -0.4, "요청한 가격대보다 낮은 공연일 수 있습니다.")
+    return None
+
+
+def _runtime_intent_contribution(performance: Performance, runtime_intent: dict) -> dict | None:
+    if not runtime_intent:
+        return None
+    minutes = _runtime_minutes(performance.runtime)
+    max_minutes = runtime_intent.get("max_minutes")
+    min_minutes = runtime_intent.get("min_minutes")
+    if max_minutes is not None:
+        if minutes is None:
+            return _contribution("intent:runtime:max", -0.2, "러닝타임 정보가 없어 시간 조건은 확실히 판단하기 어렵습니다.")
+        if minutes <= max_minutes:
+            shorter_bonus = max((max_minutes - minutes) / max_minutes, 0)
+            return _contribution("intent:runtime:max", 1.8 + shorter_bonus, f"러닝타임이 {minutes}분이라 {max_minutes}분 이하 조건에 맞습니다.")
+        return _contribution("intent:runtime:max", -1.5, f"러닝타임이 {minutes}분이라 요청한 시간 조건을 넘습니다.")
+    if min_minutes is not None:
+        if minutes is None:
+            return _contribution("intent:runtime:min", -0.2, "러닝타임 정보가 없어 시간 조건은 확실히 판단하기 어렵습니다.")
+        if minutes >= min_minutes:
+            return _contribution("intent:runtime:min", 0.8, f"러닝타임이 {minutes}분이라 요청한 길이 조건에 맞습니다.")
+    return None
+
+
+def _schedule_intent_contribution(performance: Performance, schedule_intent: dict) -> dict | None:
+    if not schedule_intent:
+        return None
+    schedule_text = performance.schedule_info or ""
+    if not schedule_text:
+        return _contribution("intent:schedule", -0.2, "공연 시간 정보가 부족해 일정 조건은 확실히 판단하기 어렵습니다.")
+
+    score = 0.0
+    reasons = []
+    days = schedule_intent.get("days") or []
+    if days:
+        if any(day in schedule_text for day in days):
+            score += 1.4
+            reasons.append("요청한 요일 조건과 공연 시간 정보가 맞습니다.")
+        else:
+            score -= 0.9
+            reasons.append("공연 시간 정보에서 요청한 요일 조건은 확인되지 않습니다.")
+
+    time_of_day = schedule_intent.get("time_of_day")
+    if time_of_day:
+        if _schedule_matches_time_of_day(schedule_text, time_of_day):
+            score += 1.1
+            reasons.append("요청한 시간대와 맞는 회차가 있습니다.")
+        else:
+            score -= 0.5
+            reasons.append("요청한 시간대와 정확히 맞는 회차는 확인되지 않습니다.")
+
+    if not reasons:
+        return None
+    return _contribution("intent:schedule", score, " ".join(reasons))
+
+
+def _accessibility_intent_contributions(performance: Performance, accessibility_intent: dict) -> list[dict]:
+    needs = accessibility_intent.get("needs") or []
+    if not needs:
+        return []
+
+    contributions = [
+        _contribution(
+            "intent:accessibility:data_unavailable",
+            -0.8,
+            "접근성 지원 여부를 판단할 전용 데이터가 없어 조건을 완전히 확인하지 못했습니다.",
+        )
+    ]
+    venue = getattr(performance, "venue", None)
+    if venue and venue.has_parking_lot and "mobility" in needs:
+        contributions.append(_contribution("intent:accessibility:mobility_hint", 0.4, "주차 가능 정보는 있어 이동 편의의 약한 참고 신호로만 반영했습니다."))
+    return contributions
+
+
+def _feature_intent_contribution(performance: Performance, feature: str) -> dict | None:
+    text = _performance_text(performance)
+    genre_code = (performance.genre_code or "").upper()
+
+    if feature == "family":
+        if performance.is_child or _contains_any(text, ["전체", "어린이", "가족", "아이", "키즈", "아동"]):
+            return _contribution("intent:family", 2.4, "가족이나 아이와 함께 보기 좋은 요소가 있습니다.")
+        if _is_all_age(performance):
+            return _contribution("intent:family", 1.2, "관람 연령 부담이 낮아 가족 관람 후보로 볼 수 있습니다.")
+        return _contribution("intent:family", -0.6, "가족 관람 조건은 뚜렷하게 확인되지 않습니다.")
+
+    if feature in {"date", "romantic"}:
+        if _contains_any(text, ["로맨", "사랑", "연애", "데이트", "감성", "낭만", "멜로"]):
+            return _contribution(f"intent:{feature}", 2.0, "데이트나 커플 관람에 어울리는 감성 요소가 있습니다.")
+        if genre_code in {"GGGA", "AAAA"}:
+            return _contribution(f"intent:{feature}", 0.8, "뮤지컬/연극 장르라 둘이 이야기 나누기 좋은 선택지입니다.")
+
+    if feature == "healing":
+        if _contains_any(text, ["힐링", "위로", "따뜻", "감동", "잔잔", "편안", "여유"]):
+            return _contribution("intent:healing", 1.8, "잔잔하거나 따뜻한 분위기를 기대할 수 있는 단서가 있습니다.")
+        return _contribution("intent:healing", 0.3, "기분 전환용 후보로는 볼 수 있지만 힐링 단서는 강하지 않습니다.")
+
+    if feature == "light":
+        if _contains_any(text, ["코미디", "웃음", "유쾌", "재미", "쇼", "마술", "가볍"]):
+            return _contribution("intent:light", 1.8, "부담 없이 즐기기 좋은 유쾌한 단서가 있습니다.")
+        if genre_code in {"EEEA", "EEEB", "CCCD"}:
+            return _contribution("intent:light", 0.9, "가볍게 기분 전환하기 좋은 장르 후보입니다.")
+
+    if feature == "exciting":
+        if genre_code in {"CCCD", "BBBC"} or performance.is_festival:
+            return _contribution("intent:exciting", 1.8, "신나고 에너지 있는 공연을 찾는 요청과 잘 맞습니다.")
+        if _contains_any(text, ["화려", "강렬", "댄스", "밴드", "콘서트", "축제"]):
+            return _contribution("intent:exciting", 1.5, "무대 에너지나 볼거리가 기대되는 단서가 있습니다.")
+
+    if feature == "beginner":
+        if performance.zzim_count >= 5 or performance.view_count >= 20:
+            return _contribution("intent:beginner", 1.0, "관심/조회 신호가 있어 입문자에게 무난한 후보입니다.")
+        if genre_code in {"GGGA", "AAAA", "CCCA"}:
+            return _contribution("intent:beginner", 0.7, "처음 접하기 비교적 쉬운 장르 후보입니다.")
+
+    if feature == "parent":
+        if genre_code in {"CCCA", "CCCC", "AAAA"}:
+            return _contribution("intent:parent", 2.4, "부모님과 함께 보기 좋은 차분한 장르 후보입니다.")
+        if _contains_any(text, ["국악", "클래식", "전통", "명작", "감동"]):
+            return _contribution("intent:parent", 2.0, "부모님 관람에 어울릴 만한 소재 단서가 있습니다.")
+
+    if feature == "parking":
+        venue = getattr(performance, "venue", None)
+        if venue and venue.has_parking_lot:
+            return _contribution("intent:parking", 1.0, "공연장 주차 가능 정보가 있어 이동 조건에 맞습니다.")
+        return _contribution("intent:parking", -0.4, "주차 가능 여부는 확인되지 않습니다.")
+
+    if feature == "short_runtime":
+        minutes = _runtime_minutes(performance.runtime)
+        if minutes and minutes <= 100:
+            return _contribution("intent:short_runtime", 1.0, "러닝타임이 비교적 짧아 가볍게 보기 좋습니다.")
+
+    return None
+
+
+def _contribution(key: str, score: float, reason: str) -> dict:
+    return {"key": key, "score": round(score, 4), "reason": reason}
+
+
+def _performance_text(performance: Performance) -> str:
+    venue = getattr(performance, "venue", None)
+    return " ".join(
+        value
+        for value in [
+            performance.title,
+            performance.genre,
+            performance.synopsis,
+            performance.age_rating,
+            performance.runtime,
+            performance.schedule_info,
+            getattr(venue, "name", "") if venue else "",
+            getattr(venue, "facility_characteristic", "") if venue else "",
+        ]
+        if value
+    )
+
+
+def _is_all_age(performance: Performance) -> bool:
+    return _contains_any(performance.age_rating or "", ["전체", "만 7", "만7", "만 8", "만8", "36개월", "5세"])
+
+
+def _runtime_minutes(runtime: str) -> int | None:
+    if not runtime:
+        return None
+    match = re.search(r"(\d+)\s*분", runtime)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(\d+)\s*시간(?:\s*(\d+)\s*분)?", runtime)
+    if match:
+        return int(match.group(1)) * 60 + int(match.group(2) or 0)
+    return None
+
+
+def _schedule_matches_time_of_day(schedule_text: str, time_of_day: str) -> bool:
+    hours = [int(match) for match in re.findall(r"(\d{1,2})\s*:", schedule_text or "")]
+    if not hours:
+        return False
+    if time_of_day == "morning":
+        return any(5 <= hour < 12 for hour in hours)
+    if time_of_day == "afternoon":
+        return any(12 <= hour < 18 for hour in hours)
+    if time_of_day == "evening":
+        return any(hour >= 18 or hour < 5 for hour in hours)
+    return False
+
+
+def _constraint_notes(candidates: list[Candidate], request_intent: dict) -> list[str]:
+    notes = []
+    if not request_intent:
+        return notes
+
+    price_intent = request_intent.get("price") or {}
+    max_price = price_intent.get("max_price")
+    if max_price is not None and not any(_performance_satisfies_max_price(candidate.performance, max_price) for candidate in candidates):
+        cheapest = _cheapest_candidate(candidates)
+        if cheapest:
+            performance = cheapest.performance
+            cheapest_price = "무료" if performance.is_free else f"{performance.min_price:,}원"
+            notes.append(
+                f"요청한 {max_price:,}원 이하 조건을 정확히 만족하는 후보가 없어 최저가가 가장 낮은 공연을 우선 대체 후보로 포함했습니다. "
+                f"가장 낮은 후보는 {performance.title}이며 최저가는 {cheapest_price}입니다."
+            )
+
+    runtime_intent = request_intent.get("runtime") or {}
+    max_minutes = runtime_intent.get("max_minutes")
+    if max_minutes is not None and not any(_performance_satisfies_max_runtime(candidate.performance, max_minutes) for candidate in candidates):
+        notes.append(f"{max_minutes}분 이하 러닝타임 조건을 정확히 만족하는 후보를 찾지 못해 러닝타임 정보가 있거나 비교적 짧은 후보를 함께 검토했습니다.")
+
+    schedule_intent = request_intent.get("schedule") or {}
+    if schedule_intent and not any(_performance_satisfies_schedule(candidate.performance, schedule_intent) for candidate in candidates):
+        notes.append("요청한 요일/시간대 조건과 정확히 맞는 공연 시간 정보를 찾지 못해 일정 조건은 부분 일치 후보까지 넓혀 추천했습니다.")
+
+    accessibility_intent = request_intent.get("accessibility") or {}
+    if accessibility_intent.get("needs"):
+        notes.append("현재 공연/공연장 데이터에는 청각장애, 시각장애, 휠체어 접근성 지원 여부를 확정할 전용 필드가 없어 정확 필터링 대신 데이터 부족 사실을 안내해야 합니다.")
+
+    return notes
+
+
+def _performance_satisfies_max_price(performance: Performance, max_price: int) -> bool:
+    if performance.is_free:
+        return True
+    if performance.max_price is not None and performance.max_price <= max_price:
+        return True
+    return performance.min_price is not None and performance.min_price <= max_price
+
+
+def _performance_satisfies_max_runtime(performance: Performance, max_minutes: int) -> bool:
+    minutes = _runtime_minutes(performance.runtime)
+    return minutes is not None and minutes <= max_minutes
+
+
+def _performance_satisfies_schedule(performance: Performance, schedule_intent: dict) -> bool:
+    schedule_text = performance.schedule_info or ""
+    if not schedule_text:
+        return False
+    days = schedule_intent.get("days") or []
+    if days and not any(day in schedule_text for day in days):
+        return False
+    time_of_day = schedule_intent.get("time_of_day")
+    if time_of_day and not _schedule_matches_time_of_day(schedule_text, time_of_day):
+        return False
+    return True
+
+
+def _cheapest_candidate(candidates: list[Candidate]) -> Candidate | None:
+    priced = [
+        candidate
+        for candidate in candidates
+        if candidate.performance.is_free or candidate.performance.min_price is not None
+    ]
+    if not priced:
+        return None
+    return min(priced, key=lambda candidate: 0 if candidate.performance.is_free else candidate.performance.min_price)
+
+
+def _candidate_features(performance: Performance) -> list[str]:
+    features = []
+    if performance.is_child:
+        features.append("child")
+    if performance.is_festival:
+        features.append("festival")
+    if performance.openrun:
+        features.append("openrun")
+    if performance.is_daehakro:
+        features.append("daehakro")
+    if performance.is_musical_license:
+        features.append("musical_license")
+    if performance.is_musical_create:
+        features.append("musical_create")
+    return features
+
+
+def _short_text(value: str, max_length: int) -> str:
+    value = (value or "").strip()
+    if len(value) <= max_length:
+        return value
+    return f"{value[:max_length].rstrip()}..."
+
+
 def _candidate_payload(candidate: Candidate) -> dict:
     performance = candidate.performance
     venue = getattr(performance, "venue", None)
+    min_price = performance.min_price
+    max_price = performance.max_price
+    price_label = "무료" if performance.is_free else None
+    if price_label is None and min_price is not None and max_price is not None:
+        price_label = f"{min_price:,}원" if min_price == max_price else f"{min_price:,}~{max_price:,}원"
     return {
         "performance_id": performance.performance_id,
         "title": performance.title,
         "genre": performance.genre,
         "genre_code": performance.genre_code,
-        "region": getattr(venue, "sido", "") if venue else "",
+        "region": " ".join(filter(None, [getattr(venue, "sido", ""), getattr(venue, "gugun", "")])) if venue else "",
         "venue": getattr(venue, "name", "") if venue else performance.facility_name,
-        "period": {
-            "start_date": performance.start_date.isoformat() if performance.start_date else None,
-            "end_date": performance.end_date.isoformat() if performance.end_date else None,
-        },
+        "start_date": performance.start_date.isoformat() if performance.start_date else None,
+        "end_date": performance.end_date.isoformat() if performance.end_date else None,
         "status": performance.status,
+        "runtime": performance.runtime,
+        "age_rating": performance.age_rating,
+        "schedule_info": _short_text(performance.schedule_info, 80),
         "price": {
-            "min_price": performance.min_price,
-            "max_price": performance.max_price,
+            "label": price_label,
+            "min_price": min_price,
+            "max_price": max_price,
             "is_free": performance.is_free,
         },
-        "synopsis": (performance.synopsis or "")[:500],
+        "features": _candidate_features(performance),
+        "synopsis": _short_text(performance.synopsis, 80),
         "candidate_score": candidate.score,
-        "candidate_reasons": candidate.reasons,
+        "candidate_reasons": candidate.reasons[:2],
     }
 
 
