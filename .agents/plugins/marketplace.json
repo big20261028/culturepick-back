@@ -1,0 +1,20 @@
+{
+  "name": "culturepick-local",
+  "interface": {
+    "displayName": "Culturepick Local"
+  },
+  "plugins": [
+    {
+      "name": "workspace-conversation-log",
+      "source": {
+        "source": "local",
+        "path": "./plugins/workspace-conversation-log"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

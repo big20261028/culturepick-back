@@ -1,0 +1,25 @@
+{
+  "name": "workspace-conversation-log",
+  "version": "0.1.0+codex.20260723040004",
+  "description": "Capture redacted Codex conversations and preserve project handoff context.",
+  "author": {
+    "name": "CulturePick Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Workspace Conversation Log",
+    "shortDescription": "Keep redacted project conversations for handoff.",
+    "longDescription": "Captures visible Codex conversation turns through a repository Stop hook, removes tool and system records, redacts common credentials, and maintains a concise handoff summary.",
+    "developerName": "CulturePick Team",
+    "category": "Productivity",
+    "capabilities": [
+      "Automatic conversation capture",
+      "Credential redaction",
+      "Cross-device project handoff"
+    ],
+    "defaultPrompt": [
+      "\ud604\uc7ac \ud504\ub85c\uc81d\ud2b8\uc758 \ub300\ud654 \ub85c\uadf8\uc640 \uc778\uc218\uc778\uacc4 \uc694\uc57d\uc744 \ud655\uc778\ud574\uc918.",
+      "\uc774\ubc88 \uc791\uc5c5 \uacb0\uacfc\ub97c \ub300\ud654 \uc778\uc218\uc778\uacc4 \uc694\uc57d\uc5d0 \ubc18\uc601\ud574\uc918."
+    ]
+  }
+}

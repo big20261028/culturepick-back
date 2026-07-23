@@ -1,0 +1,18 @@
+{
+  "description": "Store a redacted copy of visible Codex conversation turns in the active project.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for i in python3 python; do if command -v \"$i\" >/dev/null 2>&1; then \"$i\" \"$PLUGIN_ROOT/scripts/save_conversation_log.py\" --tool codex; exit 0; fi; done; exit 0",
+            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path $env:PLUGIN_ROOT 'scripts\\run_conversation_log.ps1')\"",
+            "timeout": 30,
+            "statusMessage": "Saving redacted project conversation"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,13 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN addgroup --system culturepick && adduser --system --ingroup culturepick culturepick
+
 COPY requirements/ requirements/
 RUN pip install --no-cache-dir -r requirements/production.txt
 
 COPY . .
 
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh && chown -R culturepick:culturepick /app
+
+USER culturepick
 
 EXPOSE 8000
 

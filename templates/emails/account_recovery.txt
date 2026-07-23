@@ -1,0 +1,8 @@
+CulturePick 계정 찾기 요청을 받았습니다.
+
+이 이메일은 {{ provider_name }} 방식으로 가입되어 있습니다.
+{% if provider == "local" %}비밀번호를 잊었다면 아래 페이지에서 비밀번호 재설정 메일을 요청해주세요.
+{{ password_reset_url }}{% else %}아래 로그인 페이지에서 {{ provider_name }} 로그인을 선택해주세요.
+{{ login_url }}{% endif %}
+
+본인이 요청하지 않았다면 이 메일을 무시해주세요.

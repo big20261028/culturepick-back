@@ -12,6 +12,23 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])  # noqa: F405
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])  # noqa: F405
 
+# DRF throttles must use a cache shared by all Gunicorn workers and EB
+# instances. Keep a separate key namespace even when Celery uses the same
+# Redis/Valkey database.
+CACHE_URL = env("CACHE_URL", default="") or REDIS_URL  # noqa: F405
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": CACHE_URL,
+        "KEY_PREFIX": env("CACHE_KEY_PREFIX", default="culturepick-cache"),  # noqa: F405
+        "TIMEOUT": 300,
+    }
+}
+
+# One trusted proxy is correct for the current direct ALB -> EB request path.
+# Change this value if CloudFront or another proxy layer is added.
+REST_FRAMEWORK["NUM_PROXIES"] = env.int("DRF_NUM_PROXIES", default=1)  # noqa: F405
+
 # ── 정적 파일: 컨테이너/EB에서 admin static 제공 ───────────────────────
 MIDDLEWARE.insert(1, "whitenoise.middleware.WhiteNoiseMiddleware")  # noqa: F405
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
@@ -26,6 +43,13 @@ AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None)  # noqa: F405
 AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = False
 AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
+
+if AWS_S3_CUSTOM_DOMAIN:
+    COMMUNITY_ALLOWED_IMAGE_HOSTS.add(AWS_S3_CUSTOM_DOMAIN.lower().rstrip("."))  # noqa: F405
+elif AWS_STORAGE_BUCKET_NAME:
+    COMMUNITY_ALLOWED_IMAGE_HOSTS.add(  # noqa: F405
+        f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com".lower()
+    )
 
 STORAGES = {
     "staticfiles": {
@@ -53,4 +77,5 @@ EMAIL_HOST = env("EMAIL_HOST", default="")  # noqa: F405
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)  # noqa: F405
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")  # noqa: F405
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")  # noqa: F405
-EMAIL_USE_TLS = True
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)  # noqa: F405
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)  # noqa: F405

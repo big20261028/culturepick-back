@@ -32,6 +32,7 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
+      - ../culturepick-training-data:/culturepick-training-data
     ports:
       - "8000:8000"
     env_file:
@@ -40,6 +41,8 @@ services:
       - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=django-db
     depends_on:
       db:
         condition: service_healthy
@@ -59,6 +62,8 @@ services:
       - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=django-db
     depends_on:
       db:
         condition: service_healthy
@@ -78,8 +83,13 @@ services:
       - DJANGO_SETTINGS_MODULE=BE.settings.local
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/culturepick
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=django-db
     depends_on:
-      - celery-worker
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:

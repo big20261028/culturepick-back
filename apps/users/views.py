@@ -1,14 +1,17 @@
+import logging
+
 from django.contrib.auth import get_user_model
 from django.core import signing
 from django.db.models import Count, IntegerField, Prefetch, Q, Value
 from rest_framework import generics
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -17,16 +20,25 @@ from apps.performances.serializers import PerformanceListSerializer
 from apps.community.models import Post, normalize_post_category
 from apps.community.serializers import PostSerializer
 
+from .authentication import get_token_auth_version
 from .serializers import (
+    AccountEmailSerializer,
     LocalLoginSerializer,
     LocalSignupSerializer,
+    PasswordResetConfirmSerializer,
     PasswordVerificationSerializer,
     SocialAuthSerializer,
     UserProfileSerializer,
 )
 from .services import get_google_info, get_kakao_info, get_naver_info
+from .tasks import (
+    deliver_account_recovery_email,
+    deliver_password_reset_email,
+    normalize_recovery_email,
+)
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 PROFILE_UPDATE_TOKEN_MAX_AGE_SECONDS = 10 * 60
 PROFILE_UPDATE_TOKEN_SALT = "users.profile_update"
@@ -46,6 +58,7 @@ PROVIDER_MAP = {
 
 def _issue_tokens(user):
     refresh = RefreshToken.for_user(user)
+    refresh["auth_version"] = user.auth_version
     user.refresh_token = str(refresh)
     user.save(update_fields=["refresh_token"])
     return {
@@ -108,6 +121,69 @@ def register(request):
     return Response({"message": "회원가입이 완료되었습니다."}, status=status.HTTP_201_CREATED)
 
 
+class PublicRecoveryAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+
+
+class PasswordResetRequestView(PublicRecoveryAPIView):
+    throttle_scope = "password_reset_request"
+
+    def post(self, request):
+        serializer = AccountEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = normalize_recovery_email(serializer.validated_data["email"])
+        try:
+            deliver_password_reset_email.delay(email)
+        except Exception as exc:
+            logger.warning(
+                "Password reset task enqueue failed error_type=%s",
+                type(exc).__name__,
+            )
+
+        return Response(
+            {"message": "재설정 가능한 계정이면 입력한 이메일로 안내를 발송했습니다."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetConfirmView(PublicRecoveryAPIView):
+    throttle_scope = "password_reset_confirm"
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {"message": "비밀번호가 재설정되었습니다. 새 비밀번호로 로그인해주세요."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class AccountRecoveryView(PublicRecoveryAPIView):
+    throttle_scope = "account_recovery"
+
+    def post(self, request):
+        serializer = AccountEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = normalize_recovery_email(serializer.validated_data["email"])
+        try:
+            deliver_account_recovery_email.delay(email)
+        except Exception as exc:
+            logger.warning(
+                "Account recovery task enqueue failed error_type=%s",
+                type(exc).__name__,
+            )
+
+        return Response(
+            {"message": "안내 가능한 계정이면 입력한 이메일로 가입 정보를 발송했습니다."},
+            status=status.HTTP_200_OK,
+        )
+
+
 class CustomTokenRefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
 
@@ -115,7 +191,16 @@ class CustomTokenRefreshView(TokenRefreshView):
         refresh_token = request.data.get("refresh")
         user = User.objects.filter(refresh_token=refresh_token).first()
 
-        if not user:
+        if not user or not user.is_active:
+            raise InvalidToken("유효하지 않거나 이미 폐기된 jwt 리프레시 토큰입니다.")
+
+        try:
+            token = RefreshToken(refresh_token)
+        except TokenError as exc:
+            raise InvalidToken("유효하지 않거나 이미 폐기된 jwt 리프레시 토큰입니다.") from exc
+
+        token_version = get_token_auth_version(token)
+        if token_version is None or token_version != user.auth_version:
             raise InvalidToken("유효하지 않거나 이미 폐기된 jwt 리프레시 토큰입니다.")
 
         response = super().post(request, *args, **kwargs)
@@ -158,6 +243,11 @@ def social_login(request):
             "nickname": user_info.get("nickname", ""),
         },
     )
+
+    if not created and not user.is_active:
+        # Never issue a fresh token (or mutate provider data) for an account
+        # disabled by the user, an administrator, security, or policy.
+        raise AuthenticationFailed("Unable to sign in with this account.")
 
     if not created and user.provider != provider_value:
         return Response(

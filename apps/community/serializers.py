@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.users.serializers import user_display_name
 
+from .html_sanitizer import has_meaningful_html_content, sanitize_post_html
 from .models import Comment, Post, PostImage, normalize_post_category
 
 
@@ -70,10 +71,46 @@ class PostSerializer(serializers.ModelSerializer):
         return value
 
     def validate_content(self, value):
-        value = value.strip()
-        if not value:
+        if not value.strip():
             raise serializers.ValidationError("Content is required.")
         return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        content_format = attrs.get(
+            "content_format",
+            self.instance.content_format if self.instance else Post.ContentFormat.HTML,
+        )
+
+        if content_format != Post.ContentFormat.HTML:
+            return attrs
+
+        should_sanitize = (
+            self.instance is None
+            or "content" in attrs
+            or "content_format" in attrs
+        )
+        if not should_sanitize:
+            return attrs
+
+        content = attrs.get(
+            "content",
+            self.instance.content if self.instance else "",
+        )
+        sanitized_content = sanitize_post_html(content)
+        if not has_meaningful_html_content(sanitized_content):
+            raise serializers.ValidationError(
+                {"content": "Content must include visible text or a valid image."}
+            )
+
+        attrs["content"] = sanitized_content
+        return attrs
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if instance.content_format == Post.ContentFormat.HTML:
+            representation["content"] = sanitize_post_html(instance.content)
+        return representation
 
 
 class CommentSerializer(serializers.ModelSerializer):

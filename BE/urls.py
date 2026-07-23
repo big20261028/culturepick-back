@@ -2,10 +2,11 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from common.views import health_check
+from common.views import health_check, readiness_check
 
 urlpatterns = [
     path("health/", health_check, name="health_check"),
+    path("health/ready/", readiness_check, name="readiness_check"),
     path("admin/", admin.site.urls),
 
     # API v1

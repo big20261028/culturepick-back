@@ -40,6 +40,26 @@ Response:
 {"status": "ok"}
 ```
 
+Readiness check (database and Redis):
+
+```http
+GET /health/ready/
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "checks": {
+    "database": "ok",
+    "redis": "ok"
+  }
+}
+```
+
+If either dependency is unavailable, this endpoint returns `503 Service Unavailable`.
+
 ## Auth API
 
 ### 회원가입
@@ -102,6 +122,97 @@ Response `200`:
 }
 ```
 
+JWT에는 서버 내부의 사용자별 `auth_version`이 포함되지만 클라이언트는 이를
+해석하지 않고 토큰을 불투명 문자열로 취급합니다. 비밀번호 변경, 비밀번호 재설정,
+계정 비활성화/차단 같은 보안 상태 전환 뒤에는 이전 access/refresh가 `401`로
+거절됩니다. 이때 프론트는 저장된 두 토큰을 지우고 다시 로그인시켜야 합니다.
+
+### 비밀번호 재설정 메일 요청
+
+```http
+POST /api/v1/auth/password/reset/request/
+```
+
+Request:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "message": "재설정 가능한 계정이면 입력한 이메일로 안내를 발송했습니다."
+}
+```
+
+활성 상태의 로컬 계정에만 1시간 유효한 재설정 링크를 발송합니다. 미가입 이메일,
+소셜 계정, 비활성 계정, 차단 계정도 이메일 존재 여부를 노출하지 않도록 완전히 같은
+응답을 반환합니다. 요청은 항상 같은 Celery 작업 형태로 enqueue되고 worker가 계정
+조회와 메일 발송을 수행하므로 SMTP 시간 차이도 API 응답에 포함되지 않습니다. 기본
+요청 제한은 IP 기준 `5/hour`이며 운영에서는 공유 Redis cache에 저장됩니다.
+
+### 비밀번호 재설정 확정
+
+메일 링크의 `uid`, `token`을 전달해 새 비밀번호를 저장합니다.
+
+```http
+POST /api/v1/auth/password/reset/confirm/
+```
+
+Request:
+
+```json
+{
+  "uid": "MQ",
+  "token": "...",
+  "new_password": "NewValidPass456!",
+  "new_password_confirm": "NewValidPass456!"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "message": "비밀번호가 재설정되었습니다. 새 비밀번호로 로그인해주세요."
+}
+```
+
+토큰은 한 번만 사용할 수 있습니다. 성공하면 서버에 저장된 refresh token을 비우고
+Simple JWT blacklist 등록을 시도합니다. 이미 발급된 access token은 기존 설정상 최대
+1시간 동안 유효할 수 있습니다. 기본 요청 제한은 IP 기준 `10/hour`입니다.
+
+### 계정 가입 방식 찾기
+
+```http
+POST /api/v1/auth/account/recovery/
+```
+
+Request:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "message": "안내 가능한 계정이면 입력한 이메일로 가입 정보를 발송했습니다."
+}
+```
+
+활성 계정의 이메일 소유자에게만 가입 방식(`이메일/비밀번호`, `Google`, `Kakao`,
+`Naver`)을 발송합니다. 비활성·차단 계정을 자동으로 재활성화하지 않습니다. 미가입
+이메일도 같은 응답입니다. 이 요청 역시 항상 Celery로 처리하며 기본 요청 제한은 IP
+기준 `5/hour`입니다.
+
 ### 토큰 갱신
 
 ```http
@@ -145,6 +256,9 @@ Request:
 ```http
 POST /api/v1/auth/social/
 ```
+
+비활성·보안 잠금·정책 차단 계정에는 소셜 제공자 인증이 성공해도 새 토큰을
+발급하지 않으며 `401`을 반환합니다.
 
 Request:
 
@@ -521,6 +635,20 @@ Request:
 - `markdown`
 - `json`
 
+`html` 본문은 저장 전에 서버 허용 목록으로 정제됩니다. 허용 태그는
+`p`, `br`, `strong`, `em`, `s`, `u`, `h2`, `h3`, `ul`, `ol`, `li`,
+`blockquote`, `hr`, `pre`, `code`, `a`, `img`입니다. 속성은 `a[href]`,
+`img[src,alt,title]`만 유지합니다. 링크는 상대경로 또는 안전한
+`http`/`https`/`mailto` 스킴을 허용합니다. 이미지 `src`는 `/media/` 경로 또는
+서버의 `COMMUNITY_ALLOWED_IMAGE_HOSTS`에 등록한 호스트의 HTTPS URL만 허용합니다.
+HTTP·protocol-relative·미등록 외부 호스트와 경로 순회 값은 제거합니다. 정제 결과에
+보이는 텍스트나 유효한 이미지가 없으면
+`400 Bad Request`를 반환합니다. `markdown`과 `json` 본문에는 HTML 정제를
+적용하지 않으므로 해당 형식의 응답을 HTML로 직접 렌더링하면 안 됩니다.
+
+과거에 저장된 HTML도 API 응답에서는 같은 정책으로 정제되지만, 조회만으로
+DB 원문을 변경하지는 않습니다.
+
 ### 게시글 상세
 
 ```http
@@ -537,6 +665,9 @@ Authorization: Bearer <access_token>
 ```
 
 작성자만 수정할 수 있습니다.
+
+`content`를 수정하거나 기존 본문의 `content_format`을 `html`로 바꾸면
+작성 API와 동일한 HTML 정제와 빈 본문 검증이 적용됩니다.
 
 ### 게시글 삭제
 

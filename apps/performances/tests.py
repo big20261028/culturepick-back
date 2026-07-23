@@ -734,7 +734,7 @@ class PerformanceFeatureFilterAPITests(APITestCase):
             venue=self.seoul_venue,
         )
         Performance.objects.create(
-            performance_id="PFFILTER_KOREAN_MUSIC",
+            performance_id="PFFILTER_KMUSIC",
             title="Alpha Korean Music",
             genre="\ud55c\uad6d\uc74c\uc545(\uad6d\uc545)",
             genre_code="CCCC",
@@ -858,5 +858,5 @@ class PerformanceFeatureFilterAPITests(APITestCase):
                 self.assertEqual(response.data["total"], 1)
                 self.assertEqual(
                     response.data["searchData"][0]["performance_id"],
-                    "PFFILTER_KOREAN_MUSIC",
+                    "PFFILTER_KMUSIC",
                 )

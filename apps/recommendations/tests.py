@@ -550,15 +550,36 @@ class RecommendationAPITests(APITestCase):
             {"feedback_type": RecommendationFeedback.FeedbackType.BOOKING_LINK},
             format="json",
         )
+        candidate = TrainingExampleCandidate.objects.get(
+            source_session_id=recommendation_response.data["session_id"]
+        )
+        candidate.reviewed_by = self.user
+        candidate.reviewed_at = timezone.now()
+        candidate.save(update_fields=["reviewed_by", "reviewed_at"])
 
         with TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "recommendation_sft.jsonl"
-            call_command(
-                "export_recommendation_training_data",
-                "--format",
-                "neutral",
-                "--output",
-                str(output_path),
+            root = Path(tmpdir)
+            backend_root = root / "culturepick-back"
+            output_repository = root / "culturepick-training-data"
+            backend_root.mkdir()
+            output_repository.mkdir()
+            with override_settings(BASE_DIR=backend_root):
+                call_command(
+                    "export_recommendation_training_data",
+                    "--format",
+                    "neutral",
+                    "--output-dir",
+                    str(output_repository),
+                    "--dataset-version",
+                    "test-v1",
+                    "--apply",
+                )
+            output_path = (
+                output_repository
+                / "datasets"
+                / "recommendations"
+                / "test-v1"
+                / "data.jsonl"
             )
             lines = output_path.read_text(encoding="utf-8").splitlines()
 

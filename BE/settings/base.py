@@ -3,10 +3,13 @@
 local.py / production.py 가 이 파일을 상속합니다.
 """
 
+import mimetypes
 import ssl
+from datetime import timedelta
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 
 # ── 경로 설정 ─────────────────────────────────────────────────────────
 # BASE_DIR = culturepick-be/
@@ -129,13 +132,18 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+COMMUNITY_ALLOWED_IMAGE_HOSTS = {
+    host.strip().lower().rstrip(".")
+    for host in env.list("COMMUNITY_ALLOWED_IMAGE_HOSTS", default=[])
+    if host.strip()
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── DRF 설정 ──────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.users.authentication.AuthVersionJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -146,11 +154,29 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
     ),
     "EXCEPTION_HANDLER": "common.exceptions.custom_exception_handler",
+    # Local requests do not pass through a trusted reverse proxy. Production
+    # overrides this with the verified EB/ALB proxy count.
+    "NUM_PROXIES": 0,
+    "DEFAULT_THROTTLE_RATES": {
+        "password_reset_request": env("PASSWORD_RESET_REQUEST_THROTTLE_RATE", default="5/hour"),
+        "password_reset_confirm": env("PASSWORD_RESET_CONFIRM_THROTTLE_RATE", default="10/hour"),
+        "account_recovery": env("ACCOUNT_RECOVERY_THROTTLE_RATE", default="5/hour"),
+    },
 }
 
-# ── JWT 설정 ──────────────────────────────────────────────────────────
-from datetime import timedelta
+# ── 계정 복구 이메일 ─────────────────────────────────────────────────
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@culturepick.net")
+FRONTEND_PASSWORD_RESET_URL = env(
+    "FRONTEND_PASSWORD_RESET_URL",
+    default="https://culturepick.netlify.app/find-account",
+)
+FRONTEND_LOGIN_URL = env(
+    "FRONTEND_LOGIN_URL",
+    default="https://culturepick.netlify.app/login",
+)
+PASSWORD_RESET_TIMEOUT = env.int("PASSWORD_RESET_TIMEOUT", default=3600)
 
+# ── JWT 설정 ──────────────────────────────────────────────────────────
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
@@ -197,13 +223,14 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     "global_keyprefix": CELERY_REDIS_RESULT_GLOBAL_KEYPREFIX,
 }
 
+LOG_RAW_RETENTION_DAYS = env.int("LOG_RAW_RETENTION_DAYS", default=90)
+LOG_RETENTION_BATCH_SIZE = env.int("LOG_RETENTION_BATCH_SIZE", default=1000)
+
 if CELERY_BROKER_URL.startswith("rediss://"):
     CELERY_BROKER_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
 
 if isinstance(CELERY_RESULT_BACKEND, str) and CELERY_RESULT_BACKEND.startswith("rediss://"):
     CELERY_REDIS_BACKEND_USE_SSL = {"ssl_cert_reqs": ssl.CERT_NONE}
-
-from celery.schedules import crontab
 
 CELERY_ENABLE_KOPIS_BEAT_SCHEDULE = env.bool("CELERY_ENABLE_KOPIS_BEAT_SCHEDULE", default=False)
 KOPIS_ONGOING_SYNC_DAYS = env.int("KOPIS_ONGOING_SYNC_DAYS", default=30)
@@ -264,6 +291,4 @@ LOGGING = {
     },
 }
 
-import mimetypes
-
-mimetypes.add_type('application/javascript','.js', True)
+mimetypes.add_type("application/javascript", ".js", True)
