@@ -1,0 +1,44 @@
+# Isolated local audit. No host ports, production credentials, or outbound network.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: culturepick_audit
+      POSTGRES_USER: audit
+      POSTGRES_PASSWORD: local-audit-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit -d culturepick_audit"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+  test:
+    image: culturepick-audit:local
+    working_dir: /app
+    volumes:
+      - ../..:/app:ro
+    entrypoint: []
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      DJANGO_SETTINGS_MODULE: BE.settings.base
+      DJANGO_SECRET_KEY: audit-only-not-a-production-secret-2026
+      DATABASE_URL: postgresql://audit:local-audit-only@db:5432/culturepick_audit
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      OPENAI_API_SECRET_KEY: ""
+      OPENAI_API_KEY: ""
+      GMS_API_KEY: ""
+      GMS_KEY: ""
+      KOPIS_API_KEY: ""
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "manage.py", "test", "--noinput", "--verbosity", "1"]
+networks:
+  default:
+    internal: true
